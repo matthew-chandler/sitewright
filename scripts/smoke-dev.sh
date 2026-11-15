@@ -14,10 +14,16 @@ check() { # check NAME EXPECTED ACTUAL
 body="$($SSH "curl -fsS -m 10 -H 'Host: anything.dev.$ZONE' http://127.0.0.1:18080/" 2>&1)"
 check "daemon answers on 127.0.0.1:18080" "hello" "$body"
 
-code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "http://anything.dev.$ZONE/")"
-check "public site wildcard (needs nginx bootstrap)" "200" "$code"
+# Compare bodies, not status codes: before the bootstrap, nginx's default site answers 200.
+body="$(curl -s -m 10 "http://anything.dev.$ZONE/" | head -c 200)"
+check "public site wildcard (needs nginx bootstrap)" "hello" "$body"
 
-code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "https://sitewright-dev.$ZONE/")"
-check "public admin host (needs nginx bootstrap)" "200" "$code"
+body="$(curl -s -m 10 "https://sitewright-dev.$ZONE/" | head -c 200)"
+check "public admin host (needs nginx bootstrap)" "hello" "$body"
+
+# The sites wildcard must be DNS-only for standalone-mode TLS tests (M6).
+if getent ahostsv4 "anything.dev.$ZONE" | awk '{print $1}' | grep -qE '^(104\.|172\.6[4-9]\.|172\.7[01]\.)'; then
+  echo "note  *.dev.$ZONE resolves to Cloudflare (proxied); M6 needs it DNS-only"
+fi
 
 exit $fail
