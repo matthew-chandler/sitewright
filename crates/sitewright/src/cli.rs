@@ -46,6 +46,17 @@ pub enum Command {
     /// Administer the daemon.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// Download a site's live release as an archive.
+    Export {
+        site: String,
+        /// `folder`: the files, for any static host. `context`: a Docker build context.
+        #[arg(long, default_value = "folder")]
+        format: String,
+        /// Where to write the archive. Default: `<site>.tar.gz` or
+        /// `<site>-docker-context.tar.gz` in the current directory.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
     /// Ask the agent to build or change a site.
     Prompt {
         /// Create the site in this run (the name must be free).
@@ -134,6 +145,33 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 "It works once and expires in {} minutes.",
                 invite["valid_minutes"]
             );
+            Ok(())
+        }
+        Command::Export {
+            site,
+            format,
+            output,
+        } => {
+            let client = AdminClient::new(&loaded.data_dir)?;
+            let bytes = client
+                .get_bytes(&format!("/v1/sites/{site}/export?format={format}"))
+                .await?;
+            let output = output.unwrap_or_else(|| {
+                PathBuf::from(if format == "context" {
+                    format!("{site}-docker-context.tar.gz")
+                } else {
+                    format!("{site}.tar.gz")
+                })
+            });
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("cannot write {}", output.display()))?;
+            println!("Wrote {} ({} bytes).", output.display(), bytes.len());
+            if format == "context" {
+                println!(
+                    "Build it with: tar -xzf {} && cd {site} && docker build -t {site} .",
+                    output.display()
+                );
+            }
             Ok(())
         }
         Command::Prompt {

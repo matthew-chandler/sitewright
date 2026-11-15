@@ -147,6 +147,14 @@ pub fn definitions() -> Vec<ToolDef> {
             none(),
         ),
         def(
+            "export_site",
+            "Build a downloadable archive of the live site: \"folder\" (the files, for any static host) or \"context\" (a Docker build context with a Dockerfile). The user downloads it from the site page.",
+            schema(
+                json!({ "format": { "type": "string", "enum": ["folder", "context"] } }),
+                &["format"],
+            ),
+        ),
+        def(
             "metrics_schema",
             "Describe the metrics you can query for this site: the views, their columns, the query parameters and the dashboard format.",
             none(),
@@ -328,6 +336,17 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let hostname = required("hostname")?;
                 ToolOutcome::ok(serde_json::to_value(ctx.domains.check(hostname, ctx.http_port).await).unwrap_or(Value::Null))
             }
+            "export_site" => {
+                let format = sw_sites::ExportFormat::parse(required("format")?).map_err(fail)?;
+                let export = ctx.store.export(&ctx.site, format).await.map_err(fail)?;
+                ToolOutcome::ok(json!({
+                    "file": export.file_name,
+                    "bytes": export.bytes,
+                    "files": export.files,
+                    "release": &export.sha[..export.sha.len().min(8)],
+                    "download": format!("the Export buttons on the site page, or `sitewright export {} --format {}`", ctx.site, format.as_str()),
+                }))
+            }
             "metrics_schema" => ToolOutcome::ok(sw_metrics::dashboard::metrics_schema()),
             "run_readonly_query" => {
                 let sql = required("sql")?;
@@ -414,6 +433,7 @@ mod tests {
                 "publish_site",
                 "rollback_site",
                 "delete_site",
+                "export_site",
                 "metrics_schema",
                 "run_readonly_query",
                 "save_dashboard",

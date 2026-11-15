@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/prompt", post(site_prompt))
         .route("/sites/{name}/rollback", post(site_rollback))
         .route("/sites/{name}/delete", post(site_delete))
+        .route("/sites/{name}/export/{format}", get(site_export))
         .route("/sites/{name}/dashboard", get(dashboard_page))
         .route("/sites/{name}/dashboard/data", get(dashboard_data))
         .route(
@@ -605,6 +606,17 @@ async fn site_delete(
         Ok(_) => hx_redirect("/"),
         Err(e) => error_fragment(e.to_string()),
     }
+}
+
+async fn site_export(
+    State(state): State<AppState>,
+    Path((name, format)): Path<(String, String)>,
+) -> Response {
+    let result = match sw_sites::ExportFormat::parse(&format) {
+        Ok(format) => crate::api::export_response(&state, &name, format).await,
+        Err(e) => Err(e.into()),
+    };
+    result.unwrap_or_else(IntoResponse::into_response)
 }
 
 // ---------------------------------------------------------------------- dashboard

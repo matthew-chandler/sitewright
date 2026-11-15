@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
         .route("/v1/sites/{name}/check-domain", get(check_domain))
+        .route("/v1/sites/{name}/export", get(export_site))
         .route("/v1/runs", get(list_runs).post(start_run))
         .route("/v1/runs/{id}", get(get_run))
         .route("/v1/runs/{id}/events", get(run_events))
@@ -352,4 +353,48 @@ pub fn run_event_stream(
             return Some((Ok(sse), s));
         }
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportQuery {
+    format: Option<String>,
+}
+
+/// Download an archive of a site's live release.
+async fn export_site(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<ExportQuery>,
+) -> ApiResult<axum::response::Response> {
+    let format = sw_sites::ExportFormat::parse(q.format.as_deref().unwrap_or("folder"))?;
+    export_response(&state, &name, format).await
+}
+
+/// Build an export and return it as a file download.
+pub async fn export_response(
+    state: &AppState,
+    name: &str,
+    format: sw_sites::ExportFormat,
+) -> ApiResult<axum::response::Response> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let export = state.store.export(name, format).await?;
+    let bytes = tokio::fs::read(&export.path).await.map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the export could not be read",
+        )
+    })?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/gzip".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", export.file_name),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        bytes,
+    )
+        .into_response())
 }

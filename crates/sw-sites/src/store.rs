@@ -894,6 +894,37 @@ impl SiteStore {
         Ok(release)
     }
 
+    /// Build an archive of the site's live release in the exports directory.
+    pub async fn export(
+        &self,
+        name: &str,
+        format: crate::export::ExportFormat,
+    ) -> Result<crate::export::Export> {
+        let site = self.get(name).await?;
+        let current = site.current_release.ok_or_else(|| {
+            SiteError::Invalid(format!(
+                "site {name} has not been published yet, so there is nothing to export"
+            ))
+        })?;
+        let release = self.release(current).await?;
+        self.ensure_release_dir(&site.name, &release.sha).await?;
+        let release_dir = self.inner.data.site_release(&site.name, &release.sha);
+        let exports_dir = self.inner.data.exports_dir();
+        let name = name.to_owned();
+        let export = blocking(move || {
+            crate::export::build(&name, &release.sha, &release_dir, &exports_dir, format)
+        })
+        .await?;
+        self.audit(
+            Author::User,
+            "site.export",
+            site.name.as_str(),
+            Some(format.as_str()),
+        )
+        .await;
+        Ok(export)
+    }
+
     // ------------------------------------------------------------------ deleting
 
     /// Soft-delete a site: it stops being served at once and can be restored until it is

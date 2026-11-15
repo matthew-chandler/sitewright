@@ -80,6 +80,19 @@
 </section>
 
 <section>
+  <h2>Export</h2>
+  {% if published %}
+  <p class="muted">Download the live release to host it somewhere else.</p>
+  <div class="row">
+    <a class="button" href="/sites/{{ name }}/export/folder" download>Files (.tar.gz)</a>
+    <a class="button" href="/sites/{{ name }}/export/context" download>Docker build context</a>
+  </div>
+  {% else %}
+  <p class="empty">Publish the site first.</p>
+  {% endif %}
+</section>
+
+<section>
   <h2>Delete</h2>
   <details>
     <summary>Delete this site</summary>
