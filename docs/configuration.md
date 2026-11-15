@@ -54,6 +54,39 @@ Unknown keys are rejected, so a typo is an error rather than a silently ignored 
 | `purge_after_days` | `7` | How long a deleted site stays restorable. |
 | `allowed_extensions` | common web file types | File extensions a site may contain (lowercase, no dot). |
 
+### `[llm]`
+
+See [providers.md](providers.md) for the provider keys and examples.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `default` | first provider | Id of the provider used when a run does not name one. |
+| `[[llm.providers]]` | none | One table per provider. |
+| `[[llm.prices]]` | none | `model`, `input_per_mtok`, `output_per_mtok`: US dollars per million tokens. |
+
+### `[agent]`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `max_turns` | `40` | Most model calls in one run. |
+| `max_run_tokens` | `1000000` | Most tokens (input plus output, summed over all calls) in one run. |
+| `daily_spend_cap_usd` | `5.0` | Most US dollars spent across all runs per UTC day. Needs a price for the model. |
+| `max_concurrent_runs` | `2` | Most runs in progress at once. There is always at most one per site. |
+
+Hitting a limit ends the run cleanly with status `limit` and a message naming the limit.
+
+## Secrets
+
+`secrets.toml` in the data directory holds API keys:
+
+```toml
+[keys]
+azure = "..."
+```
+
+It must be mode 0600; the daemon refuses a file other users can read. Its values are never
+logged, never shown, and never included in errors.
+
 ## Examples
 
 Local development (`dev/local.toml`):

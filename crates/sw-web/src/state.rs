@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
+use sw_agent::Agent;
 use sw_core::Config;
 use sw_metrics::{RequestLog, VisitorHasher};
-use sw_sites::SiteStore;
+use sw_sites::{DomainChecker, SiteStore};
 
 /// Everything a handler needs. Cheap to clone.
 #[derive(Debug, Clone)]
@@ -13,6 +14,8 @@ pub struct AppState {
     pub store: SiteStore,
     pub request_log: RequestLog,
     pub hasher: Arc<VisitorHasher>,
+    pub agent: Agent,
+    pub domains: DomainChecker,
     /// The admin UI's hostname, normalized.
     pub admin_host: Arc<str>,
 }
@@ -23,6 +26,8 @@ impl AppState {
         store: SiteStore,
         request_log: RequestLog,
         hasher: Arc<VisitorHasher>,
+        agent: Agent,
+        domains: DomainChecker,
     ) -> Self {
         let admin_host = config.domains.admin_host().into();
         Self {
@@ -30,6 +35,8 @@ impl AppState {
             store,
             request_log,
             hasher,
+            agent,
+            domains,
             admin_host,
         }
     }

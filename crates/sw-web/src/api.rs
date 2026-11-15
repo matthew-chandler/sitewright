@@ -8,7 +8,14 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sw_sites::{Author, ImportReport, PublishOutcome, Release, Site, SiteInfo, import};
+use std::convert::Infallible;
+
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures_util::Stream;
+use sw_agent::{Run, RunEvent, RunRequest};
+use sw_sites::{
+    Author, DomainCheck, ImportReport, PublishOutcome, Release, Site, SiteInfo, import,
+};
 
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
@@ -29,6 +36,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/rollback", post(rollback_site))
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
+        .route("/v1/sites/{name}/check-domain", get(check_domain))
+        .route("/v1/runs", get(list_runs).post(start_run))
+        .route("/v1/runs/{id}", get(get_run))
+        .route("/v1/runs/{id}/events", get(run_events))
+        .route("/v1/runs/{id}/cancel", post(cancel_run))
         .with_state(state)
 }
 
@@ -189,4 +201,136 @@ async fn restore_site(
     Path(name): Path<String>,
 ) -> ApiResult<Json<Site>> {
     Ok(Json(state.store.restore(&name, Author::User).await?))
+}
+
+/// Check that a site's primary hostname resolves and reaches this server.
+async fn check_domain(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<DomainCheck>> {
+    let info = state.store.info(&name).await?;
+    let hostname = info
+        .hostnames
+        .first()
+        .map(|h| h.hostname.clone())
+        .unwrap_or_default();
+    let port = match (
+        state.config.domains.public_scheme,
+        state.config.domains.public_port,
+    ) {
+        (sw_core::config::Scheme::Http, Some(port)) => port,
+        _ => 80,
+    };
+    Ok(Json(state.domains.check(&hostname, port).await))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartRunBody {
+    site: String,
+    prompt: String,
+    /// Create the site in this run.
+    #[serde(default)]
+    new: bool,
+    provider: Option<String>,
+}
+
+async fn start_run(
+    State(state): State<AppState>,
+    Json(body): Json<StartRunBody>,
+) -> ApiResult<(StatusCode, Json<Run>)> {
+    let run = state
+        .agent
+        .start(RunRequest {
+            site: body.site,
+            prompt: body.prompt,
+            new: body.new,
+            provider: body.provider,
+        })
+        .await?;
+    Ok((StatusCode::CREATED, Json(run)))
+}
+
+#[derive(Debug, Deserialize)]
+struct RunsQuery {
+    site: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn list_runs(
+    State(state): State<AppState>,
+    Query(q): Query<RunsQuery>,
+) -> ApiResult<Json<Vec<Run>>> {
+    Ok(Json(
+        state
+            .agent
+            .list(q.site.as_deref(), q.limit.unwrap_or(20).clamp(1, 200))
+            .await?,
+    ))
+}
+
+async fn get_run(State(state): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<Run>> {
+    Ok(Json(state.agent.get(id).await?))
+}
+
+async fn cancel_run(State(state): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
+    state.agent.get(id).await?;
+    Ok(Json(json!({ "cancelling": state.agent.cancel(id) })))
+}
+
+/// A run's events as server-sent events: everything stored so far, then live events
+/// until the run ends. Each stored event carries its sequence number as the SSE id.
+async fn run_events(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    let subscription = state.agent.subscribe(id).await?;
+    Ok(Sse::new(run_event_stream(subscription)).keep_alive(KeepAlive::default()))
+}
+
+/// Replay then follow a run. Shared by the API and (from M3) the web UI.
+pub fn run_event_stream(
+    subscription: sw_agent::Subscription,
+) -> impl Stream<Item = Result<Event, Infallible>> {
+    struct Follow {
+        past: std::vec::IntoIter<(i64, RunEvent)>,
+        live: Option<tokio::sync::broadcast::Receiver<(i64, RunEvent)>>,
+        last_seq: i64,
+        done: bool,
+    }
+    let state = Follow {
+        past: subscription.past.into_iter(),
+        live: subscription.live,
+        last_seq: 0,
+        done: false,
+    };
+    futures_util::stream::unfold(state, |mut s| async move {
+        loop {
+            if s.done {
+                return None;
+            }
+            let (seq, event) = match s.past.next() {
+                Some(item) => item,
+                None => match s.live.as_mut()?.recv().await {
+                    Ok(item) => item,
+                    // Closed: the run ended. Lagged: this reader fell too far behind; it
+                    // can reconnect and replay from the database.
+                    Err(_) => return None,
+                },
+            };
+            if seq != 0 {
+                if seq <= s.last_seq {
+                    continue; // already replayed from the database
+                }
+                s.last_seq = seq;
+            }
+            s.done = matches!(event, RunEvent::Done { .. });
+            let mut sse = Event::default()
+                .data(serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()));
+            if seq != 0 {
+                sse = sse.id(seq.to_string());
+            }
+            return Some((Ok(sse), s));
+        }
+    })
 }

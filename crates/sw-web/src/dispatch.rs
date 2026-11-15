@@ -7,6 +7,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use sw_core::names::normalize_hostname;
+use sw_sites::domains::WELL_KNOWN_PREFIX;
 use tower::ServiceExt;
 use tower_http::compression::CompressionLayer;
 
@@ -37,6 +38,14 @@ async fn dispatch(
     let Some(host) = request_host(&request) else {
         return (StatusCode::BAD_REQUEST, "missing or invalid Host header\n").into_response();
     };
+    // Domain checks: answered on every hostname, so a name can be verified before (and
+    // regardless of whether) it belongs to a site.
+    if let Some(token) = request.uri().path().strip_prefix(WELL_KNOWN_PREFIX) {
+        return match d.state.domains.answer(token) {
+            Some(proof) => ([(header::CACHE_CONTROL, "no-store")], proof).into_response(),
+            None => unknown_host(),
+        };
+    }
     if host == *d.state.admin_host {
         return match d.admin.oneshot(request).await {
             Ok(response) => response,

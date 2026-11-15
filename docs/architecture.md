@@ -13,9 +13,12 @@ grows with each milestone; [PLAN.md](../PLAN.md) describes the full v1 design.
 | `sw-sites` | The site store: path confinement, git history, immutable releases, routing table. |
 | `sw-web` | HTTP: host-based dispatch, static serving, the JSON API, the admin socket. |
 | `sw-metrics` | Request log and privacy-preserving visitor hashing. |
-| `sw-llm`, `sw-agent`, `sw-tls`, `sw-update` | Placeholders for later milestones. |
+| `sw-llm` | The `LlmProvider` trait, SSE parsing, retries and the provider adapters. |
+| `sw-agent` | The agent loop, its tools, the system prompt and run persistence. |
+| `sw-tls`, `sw-update` | Placeholders for later milestones. |
 
-Dependencies point one way: `sitewright` → `sw-web` → `sw-sites`, `sw-metrics` → `sw-core`.
+Dependencies point one way: `sitewright` → `sw-web` → `sw-agent` → `sw-sites`, `sw-llm` →
+`sw-core`.
 
 ## A request
 
@@ -72,6 +75,35 @@ Three properties follow from this shape:
   content, without moving git's `HEAD`, so the next publish records the change on top of
   the existing history.
 - **Edits are never live until published.** File tools write to the working tree only.
+
+## An agent run
+
+```mermaid
+sequenceDiagram
+    participant U as User (CLI or UI)
+    participant A as Agent loop
+    participant M as Model (LlmProvider)
+    participant T as Tools
+    participant S as Site store
+    U->>A: prompt for a site
+    A->>A: check name, daily budget, one-run-per-site lock
+    loop until the model stops, a limit is hit or the user cancels
+        A->>M: system prompt, conversation, tool schemas (streaming)
+        M-->>A: text and tool calls
+        A-->>U: events (SSE), also stored in agent_events
+        A->>T: run each tool call
+        T->>S: confined file operations, validate, publish
+        T-->>A: JSON result, or an error the model can read
+    end
+    A-->>U: done (succeeded, failed, cancelled or limit), tokens and cost
+```
+
+The model never touches the disk or the network. Tool implementations are ordinary Rust
+that call the site store, so the sandbox, validation and health-check rules above apply
+to the agent exactly as they do to the CLI. Tool failures are returned to the model as
+results, not raised, so it can correct itself; only provider failures end a run. Deleting
+a site is never done by a tool: `delete_site` emits a confirmation request that a person
+answers by typing the site's name.
 
 ## The file sandbox
 

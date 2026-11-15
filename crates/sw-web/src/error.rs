@@ -4,6 +4,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use sw_agent::AgentError;
 use sw_sites::SiteError;
 
 /// An error returned by an API handler, rendered as `{"error": "..."}`.
@@ -40,6 +41,27 @@ impl From<SiteError> for ApiError {
             tracing::error!(error = %e, "request failed");
         }
         Self::new(status, e.to_string())
+    }
+}
+
+impl From<AgentError> for ApiError {
+    fn from(e: AgentError) -> Self {
+        let status = match &e {
+            AgentError::Invalid(_) | AgentError::Provider(_) => StatusCode::BAD_REQUEST,
+            AgentError::Busy(_) => StatusCode::CONFLICT,
+            AgentError::Budget(_) => StatusCode::TOO_MANY_REQUESTS,
+            AgentError::NotFound(_) => StatusCode::NOT_FOUND,
+            AgentError::Site(_) | AgentError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        match e {
+            AgentError::Site(site) => site.into(),
+            other => {
+                if status.is_server_error() {
+                    tracing::error!(error = %other, "request failed");
+                }
+                Self::new(status, other.to_string())
+            }
+        }
     }
 }
 

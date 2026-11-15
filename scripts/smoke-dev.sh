@@ -22,7 +22,7 @@ check "admin host answers 200" "200" "$(on_vps "sitewright-dev.$ZONE" /)"
 
 # --- through the public hostnames (need the nginx bootstrap) ---
 # Compare bodies, not just status codes: before the bootstrap nginx's default site answers.
-body="$(curl -s -m 10 "http://smoke.dev.$ZONE/" | grep -c 'Hello from Sitewright')"
+body="$(curl -s -m 10 "http://smoke.dev.$ZONE/" | grep -c "<h1>Hello from Sitewright</h1>")"
 check "public: known site (needs nginx bootstrap)" "1" "$body"
 check "public: unknown host is 404 (needs nginx bootstrap)" "404" "$(curl -s -m 10 -o /dev/null -w '%{http_code}' "http://no-such-site.dev.$ZONE/")"
 body="$(curl -s -m 10 "https://sitewright-dev.$ZONE/" | grep -c 'Sitewright')"
