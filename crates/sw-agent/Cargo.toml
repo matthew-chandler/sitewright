@@ -24,6 +24,7 @@ tokio = { version = "1.54.1", features = ["rt", "sync", "time", "macros"] }
 tokio-util = "0.7.20"
 tracing = "0.1.44"
 async-trait = "0.1.92"
+rust-embed = "8.14.0"
 
 [dev-dependencies]
 async-trait = "0.1.92"

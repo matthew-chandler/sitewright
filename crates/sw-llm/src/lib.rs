@@ -5,7 +5,9 @@
 //! translates that shape to and from one wire format. There is no LLM framework
 //! underneath, only `reqwest`.
 
+pub mod anthropic;
 pub mod error;
+pub mod gemini;
 pub mod http;
 pub mod mock;
 pub mod openai_compat;
@@ -32,6 +34,11 @@ pub enum Message {
     Assistant {
         text: String,
         tool_calls: Vec<ToolCall>,
+        /// The provider's own form of this turn, when it must be sent back unchanged
+        /// (Anthropic thinking blocks, Gemini thought signatures). Only meaningful to the
+        /// adapter that produced it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw: Option<serde_json::Value>,
     },
     /// The result of one tool call, answering the `ToolCall` with the same `call_id`.
     Tool {
@@ -109,6 +116,9 @@ pub enum Event {
     TextDelta(String),
     /// A complete tool call. Adapters buffer partial arguments and emit this once.
     ToolCall(ToolCall),
+    /// The provider's own form of the whole assistant turn, to be stored in
+    /// [`Message::Assistant::raw`] and replayed on the next call.
+    Raw(serde_json::Value),
     /// Token usage for this call. May arrive more than once; later values replace earlier.
     Usage(Usage),
     /// The last event of a successful stream.
@@ -151,10 +161,8 @@ pub fn build_provider(
     };
     match config.kind {
         ProviderKind::OpenaiCompat => Ok(Arc::new(openai_compat::OpenAiCompat::new(config, key)?)),
-        other => Err(LlmError::Config(format!(
-            "provider kind {:?} is not available in this version",
-            other.as_str()
-        ))),
+        ProviderKind::Anthropic => Ok(Arc::new(anthropic::Anthropic::new(config, key)?)),
+        ProviderKind::Gemini => Ok(Arc::new(gemini::Gemini::new(config, key)?)),
     }
 }
 
@@ -168,6 +176,7 @@ pub async fn collect(mut stream: EventStream) -> Result<Collected, LlmError> {
             Event::TextDelta(text) => out.text.push_str(&text),
             Event::ToolCall(call) => out.tool_calls.push(call),
             Event::Usage(usage) => out.usage = usage,
+            Event::Raw(raw) => out.raw = Some(raw),
             Event::Stop(reason) => out.stop = Some(reason),
         }
     }
@@ -181,6 +190,7 @@ pub struct Collected {
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,
     pub stop: Option<StopReason>,
+    pub raw: Option<serde_json::Value>,
 }
 
 /// The outcome of [`test_connection`].

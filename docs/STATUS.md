@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M3 built and deployed; M4 next)_
+_Last updated: 2026-11-15 (M4 done; M5 next)_
 
 ## Needs from Matthew
 
@@ -40,7 +40,7 @@ to DNS only.
 | M1 Serve sites (proxy mode) | done |
 | M2 Agent with tools, one provider | done |
 | M3 Web UI and passkeys | done, pending the phone checklist (Needs #1, #2) |
-| M4 Skills and more providers | not started |
+| M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
 | M5 Metrics and dashboards | not started |
 | M6 Standalone TLS, updates, export, v1.0.0 | not started |
 
@@ -85,13 +85,20 @@ to DNS only.
   worker. Providers can be added in the UI (keys go to `secrets.toml`). 96 tests,
   including the whole passkey flow with a software authenticator. Deployed to the VPS.
 
+- **M4:** the skills loader (index in the prompt, `load_skill` and `read_skill_file` on
+  demand, user skills in `<data>/skills/` picked up per run and overriding built-ins),
+  four built-in skills validated by `skills-ref` in CI, and the `anthropic` and `gemini`
+  adapters with fixture tests. Each adapter replays the model's own turn (thinking
+  blocks, thought signatures) unchanged. 110 tests. Live on Azure the agent now loads
+  `create-site`, reads its templates and builds from them.
+
 ## In progress
 
-- M4: skills loader and the six built-in skills, `anthropic` and `gemini` adapters.
+- M5: metrics beacon, uptime checks, rollups, default and AI dashboards.
 
 ## Next
 
-- M5: metrics beacon, uptime checks, rollups, default and AI dashboards.
+- M6: standalone TLS (ACME), signed releases and self-update, export, install, v1.0.0.
 
 ## Decisions worth knowing (beyond the ADRs)
 
@@ -99,10 +106,15 @@ to DNS only.
   (`scripts/sqlx-prepare.sh --check`). Run the script after touching a query or migration.
 - `deny.toml` ignores RUSTSEC-2026-0459 (bundled SQLite, local-only attack) with a written
   justification, because no sqlx release accepts the fixed `libsqlite3-sys` yet.
-- Tools that belong to later subsystems arrive with them: `load_skill` and
-  `read_skill_file` in M4, `metrics_schema`, `run_readonly_query` and `save_dashboard` in
-  M5, `export_site` in M6. Until M4 the agent's instructions are built into its system
-  prompt.
+- Tools and skills that belong to later subsystems arrive with them: `metrics_schema`, `run_readonly_query` and `save_dashboard` in
+  M5, `export_site` in M6, each with its skill
+  (`design-dashboard`, `export-site`).
+- Skill folders use `references/` and `assets/` (the Agent Skills spec's names) rather
+  than the plan's `templates/`, so the reference validator accepts them.
+- Anthropic and Gemini keys are optional inputs and were not provided, so those adapters
+  are covered by mock-server fixtures only. If you add `ANTHROPIC_API_KEY` or
+  `GEMINI_API_KEY` to `.env` and rerun `scripts/dev-secrets.sh`, add a provider in
+  Settings and press Test.
 - Every agent tool is bound to the run's site; the model cannot name another site for a
   write. `create_site` only works in a run started with `--new`, for that name.
 - `scripts/dev-secrets.sh local|vps` turns `.env` into `secrets.toml` and an `[llm]`

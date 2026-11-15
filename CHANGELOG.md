@@ -20,3 +20,5 @@ All notable changes to this project are documented here. The format follows
 - The web UI (M3): a mobile-first, installable admin app with passkey sign-in, live run
   streaming, release history with one-tap rollback, typed-confirmation delete, provider
   settings with "Test connection", API tokens, and `sitewright admin invite`.
+- Skills and more providers (M4): Agent Skills loaded on demand, four built-in skills,
+  user skills in the data directory, and adapters for Anthropic and Gemini.

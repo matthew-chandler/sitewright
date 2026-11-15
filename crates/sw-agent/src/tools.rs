@@ -15,6 +15,7 @@ const MAX_READ_BYTES: usize = 200 * 1024;
 pub struct ToolContext {
     pub store: SiteStore,
     pub domains: DomainChecker,
+    pub skills: crate::skills::Skills,
     /// The site this run is bound to.
     pub site: String,
     /// Whether the run was started to create `site` (so `create_site` is allowed).
@@ -143,6 +144,22 @@ pub fn definitions() -> Vec<ToolDef> {
             "delete_site",
             "Ask the user to confirm deleting this site. Does not delete anything itself: the site is removed only after the user confirms.",
             none(),
+        ),
+        def(
+            "load_skill",
+            "Load the full instructions of a skill from the skills index. Do this before starting a task the skill covers.",
+            schema(
+                json!({ "name": { "type": "string", "description": "Skill name from the index, for example create-site" } }),
+                &["name"],
+            ),
+        ),
+        def(
+            "read_skill_file",
+            "Read a file bundled with a skill, such as references/checklist.md or assets/page.html.",
+            schema(
+                json!({ "name": { "type": "string" }, "path": { "type": "string", "description": "Path inside the skill folder" } }),
+                &["name", "path"],
+            ),
         ),
         def(
             "check_domain",
@@ -286,6 +303,17 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let hostname = required("hostname")?;
                 ToolOutcome::ok(serde_json::to_value(ctx.domains.check(hostname, ctx.http_port).await).unwrap_or(Value::Null))
             }
+            "load_skill" => {
+                let name = required("name")?;
+                let (instructions, files) = ctx.skills.load(name).map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({ "skill": name, "instructions": instructions, "files": files }))
+            }
+            "read_skill_file" => {
+                let name = required("name")?;
+                let path = required("path")?;
+                let content = ctx.skills.read_file(name, path).map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({ "skill": name, "path": path, "content": content }))
+            }
             other => ToolOutcome::error(format!("there is no tool named {other:?}")),
         })
     }
@@ -328,6 +356,8 @@ mod tests {
                 "publish_site",
                 "rollback_site",
                 "delete_site",
+                "load_skill",
+                "read_skill_file",
                 "check_domain"
             ]
         );

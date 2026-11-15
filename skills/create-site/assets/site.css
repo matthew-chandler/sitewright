@@ -1,0 +1,61 @@
+/* Starter stylesheet: mobile first, system fonts, light and dark. Change the custom
+   properties to restyle the whole site. */
+:root {
+  color-scheme: light dark;
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --text: #1f2421;
+  --muted: #5c6661;
+  --line: #dedbd2;
+  --accent: #1d6b52;
+  --accent-text: #ffffff;
+  --measure: 68ch;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141715;
+    --surface: #1d211f;
+    --text: #e8ebe9;
+    --muted: #a0aaa5;
+    --line: #313835;
+    --accent: #62c9a4;
+    --accent-text: #08130f;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 1.0625rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+img, svg { max-width: 100%; height: auto; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { line-height: 1.2; }
+h1 { font-size: clamp(1.8rem, 6vw, 2.6rem); margin: 0 0 0.5rem; }
+h2 { font-size: 1.35rem; margin: 2rem 0 0.5rem; }
+
+.skip { position: absolute; left: -999px; }
+.skip:focus { left: 1rem; top: 1rem; background: var(--surface); padding: 0.5rem 0.75rem; }
+
+.site-header, main, .site-footer { max-width: 60rem; margin: 0 auto; padding: 1rem 1.25rem; }
+.site-header { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; align-items: center; justify-content: space-between; }
+.site-name { font-weight: 700; font-size: 1.15rem; color: var(--text); text-decoration: none; }
+.site-header ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; }
+.site-header nav a { display: inline-block; padding: 0.5rem 0; text-decoration: none; }
+.site-header nav a[aria-current="page"] { color: var(--text); font-weight: 600; }
+
+main p, main ul, main ol, main dl { max-width: var(--measure); }
+.lead { font-size: 1.2rem; color: var(--muted); }
+
+.cards { list-style: none; padding: 0; margin: 1.5rem 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); max-width: none; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+.card h3 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+.card p { margin: 0; color: var(--muted); }
+
+.button { display: inline-block; background: var(--accent); color: var(--accent-text); padding: 0.7rem 1.1rem; border-radius: 10px; text-decoration: none; font-weight: 600; }
+
+.site-footer { color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--line); margin-top: 3rem; }

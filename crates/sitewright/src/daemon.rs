@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use sw_agent::Agent;
+use sw_agent::{Agent, Skills};
 use sw_core::DataDir;
 use sw_core::config::Loaded;
 use sw_metrics::{RequestLog, VisitorHasher};
@@ -65,6 +65,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     let agent = Agent::new(
         store.clone(),
         domains.clone(),
+        Skills::new(Some(data.skills_dir())),
         config.clone(),
         Arc::new(providers.clone()),
     )

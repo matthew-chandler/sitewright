@@ -61,13 +61,28 @@ jobs:
       - run: |
           file target/x86_64-unknown-linux-musl/release/sitewright | tee /dev/stderr | grep -q 'statically linked'
 
+  skills:
+    name: validate built-in skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: skills-ref validate
+        run: |
+          for skill in skills/*/; do
+            npx --yes skills-ref@0.1.5 validate "$skill"
+          done
+
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [check, deny, musl]
+    needs: [check, deny, musl, skills]
     runs-on: ubuntu-latest
     steps:
       - run: |
           test "${{ needs.check.result }}" = success
           test "${{ needs.deny.result }}" = success
           test "${{ needs.musl.result }}" = success
+          test "${{ needs.skills.result }}" = success

@@ -170,6 +170,7 @@ async fn tool_call_round_trip_with_fragmented_arguments_and_azure_auth() {
     next.messages.push(Message::Assistant {
         text: String::new(),
         tool_calls: got.tool_calls.clone(),
+        raw: None,
     });
     next.messages.push(Message::Tool {
         call_id: "call_a".into(),

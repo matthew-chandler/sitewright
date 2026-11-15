@@ -7,8 +7,8 @@ never go in `config.toml`: they live in `secrets.toml` and are referred to by na
 | Kind | Covers | Status |
 | --- | --- | --- |
 | `openai_compat` | OpenAI, Azure OpenAI (v1 endpoint), OpenRouter, Groq, DeepSeek, Ollama, vLLM, LM Studio | available |
-| `anthropic` | Claude models (Messages API) | arrives in M4 |
-| `gemini` | Gemini models (generateContent) | arrives in M4 |
+| `anthropic` | Claude models (Messages API) | available |
+| `gemini` | Gemini models (generateContent) | available |
 
 The agent needs reliable **tool calling** and **streaming**. Small local models are best
 effort: they often fail to build a whole site.
@@ -46,13 +46,13 @@ Secrets are re-read on every run, so a new key works without a restart.
 | --- | --- | --- |
 | `id` | required | Name used by `llm.default`, `--provider` and the UI. |
 | `kind` | required | `openai_compat`, `anthropic` or `gemini`. |
-| `base_url` | required for `openai_compat` | API base; `/chat/completions` is appended. |
+| `base_url` | required for `openai_compat` | API base. `openai_compat` appends `/chat/completions`. For `anthropic` (default `https://api.anthropic.com`) and `gemini` (default `https://generativelanguage.googleapis.com`) set it only to use a gateway. |
 | `model` | required | Model name (Azure: deployment name). |
 | `auth` | `"bearer"` | `"bearer"` sends `Authorization: Bearer <key>`; `"api_key_header"` sends `api-key: <key>`. |
 | `key_ref` | none | Name of the key in `secrets.toml`. Omit for endpoints without a key. |
 | `timeout_secs` | `300` | Wait for the response to start, and between streamed chunks. |
 | `max_retries` | `3` | Retries after a rate-limit, server or network error. |
-| `max_output_tokens` | none | Sent as `max_completion_tokens` when set. |
+| `max_output_tokens` | none | Upper bound on tokens generated per model call. `anthropic` requires a value and uses 64000 when unset. |
 | `extra_body` | `{}` | Extra fields merged into every request, e.g. `{ reasoning_effort = "low" }`. |
 
 ### Examples
@@ -74,6 +74,20 @@ base_url = "https://openrouter.ai/api/v1"
 model = "VENDOR/MODEL_ID"
 key_ref = "openrouter"
 
+# Anthropic
+[[llm.providers]]
+id = "claude"
+kind = "anthropic"
+model = "MODEL_ID"           # for example claude-sonnet-5-5
+key_ref = "anthropic"
+
+# Gemini
+[[llm.providers]]
+id = "gemini"
+kind = "gemini"
+model = "MODEL_ID"
+key_ref = "gemini"
+
 # Ollama on the same machine (no key; best effort)
 [[llm.providers]]
 id = "local"
@@ -81,6 +95,24 @@ kind = "openai_compat"
 base_url = "http://127.0.0.1:11434/v1"
 model = "MODEL_NAME"
 ```
+
+## Notes per provider
+
+**Anthropic.** Requests use the Messages API with `anthropic-version: 2026-10-21` and the
+key in `x-api-key`. No sampling parameters are sent. Thinking is left at the model's
+default; steer it with `extra_body`, for example
+`extra_body = { output_config = { effort = "low" } }`. Claude's turn (including thinking
+blocks) is sent back exactly as it was produced, which current models require. Prompt
+caching is on, so the growing conversation of an agent run is billed at the cached rate
+after the first call.
+
+**Gemini.** Requests use `streamGenerateContent` with the key in the `x-goog-api-key`
+header (never in the URL). Tool schemas are reduced to the subset Gemini accepts. Thought
+signatures are preserved between turns.
+
+**Any provider.** Use **Settings → Models → Test** (or add the provider and run a prompt)
+to check a new provider: the test asks the model to call a tool, which is exactly what the
+agent depends on.
 
 ## Cost
 
