@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M1 done; M2 next)_
+_Last updated: 2026-11-15 (M2 done; M3 next)_
 
 ## Needs from Matthew
 
@@ -33,7 +33,7 @@ to DNS only.
 | --- | --- |
 | M0 Scaffold | done |
 | M1 Serve sites (proxy mode) | done |
-| M2 Agent with tools, one provider | not started |
+| M2 Agent with tools, one provider | done |
 | M3 Web UI and passkeys | not started |
 | M4 Skills and more providers | not started |
 | M5 Metrics and dashboards | not started |
@@ -61,13 +61,22 @@ to DNS only.
   socket and the `site` CLI. 41 tests. Deployed: `http://smoke.dev.machandler.com` is live
   through nginx.
 
+- **M2:** `LlmProvider` trait with a hand-written SSE parser, retries with backoff and
+  `Retry-After`, and the `openai_compat` adapter (Azure verified live); site validation
+  (links, assets, sizes, page weight) enforced by publish; the agent loop with turn, token
+  and daily-spend limits, cancellation, one run per site, replayable event streams and
+  cost tracking; twelve tools; the delete confirmation flow; `sitewright prompt`; the runs
+  API with SSE; `check_domain`. 82 tests. On the VPS, `prompt --new hikes ...` built
+  `http://hikes.dev.machandler.com` in about a minute for $0.02, and a follow-up prompt
+  edited it.
+
 ## In progress
 
-- M2: `LlmProvider` trait, `openai_compat` adapter, agent loop and tools.
+- M3: web UI (askama + htmx), passkeys, sessions and CSRF, PWA, SSE run view.
 
 ## Next
 
-- M3: web UI and passkeys.
+- M4: skills loader and built-in skills, `anthropic` and `gemini` adapters.
 
 ## Decisions worth knowing (beyond the ADRs)
 
@@ -75,6 +84,14 @@ to DNS only.
   (`scripts/sqlx-prepare.sh --check`). Run the script after touching a query or migration.
 - `deny.toml` ignores RUSTSEC-2026-0459 (bundled SQLite, local-only attack) with a written
   justification, because no sqlx release accepts the fixed `libsqlite3-sys` yet.
+- Tools that belong to later subsystems arrive with them: `load_skill` and
+  `read_skill_file` in M4, `metrics_schema`, `run_readonly_query` and `save_dashboard` in
+  M5, `export_site` in M6. Until M4 the agent's instructions are built into its system
+  prompt.
+- Every agent tool is bound to the run's site; the model cannot name another site for a
+  write. `create_site` only works in a run started with `--new`, for that name.
+- `scripts/dev-secrets.sh local|vps` turns `.env` into `secrets.toml` and an `[llm]`
+  config section without printing anything. The VPS has both.
 - Rollback without a target goes to the release published before the current one, and
   resets the working tree to match.
 
@@ -86,7 +103,8 @@ to DNS only.
 
 ## What to test by hand
 
-- `http://smoke.dev.machandler.com` shows the example site; any other
-  `*.dev.machandler.com` name shows a plain 404.
-- On the VPS as devtest: `~/bin/sitewright --data-dir ~/sitewright-data site list`.
+- `http://hikes.dev.machandler.com`: the agent-built site.
+- On the VPS as devtest:
+  `~/bin/sitewright --data-dir ~/sitewright-data prompt hikes "make the header dark blue"`,
+  then reload the page; `... site rollback hikes` undoes it.
 - `./scripts/smoke-dev.sh` from WSL (the admin-over-HTTPS check fails until Needs #1).

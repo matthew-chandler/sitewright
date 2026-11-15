@@ -43,6 +43,19 @@ pub enum Command {
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
+    /// Ask the agent to build or change a site.
+    Prompt {
+        /// Create the site in this run (the name must be free).
+        #[arg(long)]
+        new: bool,
+        /// LLM provider id from the configuration. Default: `llm.default`.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Site name.
+        site: String,
+        /// What you want, in plain language.
+        prompt: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -100,6 +113,21 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             daemon.run_until_signal().await
         }
         Command::Site(command) => site(&loaded, command).await,
+        Command::Prompt {
+            new,
+            provider,
+            site,
+            prompt,
+        } => {
+            crate::prompt::run(
+                &AdminClient::new(&loaded.data_dir)?,
+                &site,
+                &prompt,
+                new,
+                provider.as_deref(),
+            )
+            .await
+        }
     }
 }
 

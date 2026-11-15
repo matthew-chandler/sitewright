@@ -6,9 +6,11 @@ pub mod db;
 pub mod error;
 pub mod names;
 pub mod paths;
+pub mod secrets;
 pub mod time;
 
 pub use config::Config;
 pub use error::{Error, Result};
 pub use names::SiteName;
 pub use paths::DataDir;
+pub use secrets::Secrets;

@@ -53,20 +53,36 @@ impl AdminClient {
             .await
     }
 
+    /// Open a streaming GET (server-sent events). The caller reads the body.
+    pub async fn stream(&self, path: &str) -> anyhow::Result<reqwest::Response> {
+        let response = self
+            .http
+            .get(Self::url(path))
+            .send()
+            .await
+            .map_err(|e| self.unreachable(e))?;
+        if !response.status().is_success() {
+            bail!("the daemon answered {} for {path}", response.status());
+        }
+        Ok(response)
+    }
+
+    fn unreachable(&self, e: reqwest::Error) -> anyhow::Error {
+        if e.is_connect() {
+            anyhow::anyhow!(
+                "cannot reach the daemon at {}; is `sitewright serve` running, and do you have access to its data directory?",
+                self.socket.display()
+            )
+        } else {
+            anyhow::Error::new(e).context("request to the daemon failed")
+        }
+    }
+
     async fn finish<T: DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,
     ) -> anyhow::Result<T> {
-        let response = request.send().await.map_err(|e| {
-            if e.is_connect() {
-                anyhow::anyhow!(
-                    "cannot reach the daemon at {}; is `sitewright serve` running, and do you have access to its data directory?",
-                    self.socket.display()
-                )
-            } else {
-                anyhow::Error::new(e).context("request to the daemon failed")
-            }
-        })?;
+        let response = request.send().await.map_err(|e| self.unreachable(e))?;
         let status = response.status();
         let body = response
             .bytes()

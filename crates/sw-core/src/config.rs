@@ -22,6 +22,8 @@ pub struct Config {
     pub server: ServerConfig,
     pub domains: DomainsConfig,
     pub sites: SitesConfig,
+    pub llm: LlmConfig,
+    pub agent: AgentConfig,
 }
 
 /// How the daemon is exposed to the network.
@@ -214,6 +216,143 @@ impl Default for SitesConfig {
     }
 }
 
+/// LLM providers and prices.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LlmConfig {
+    /// Id of the provider used when a run does not name one. Default: the first provider.
+    pub default: Option<String>,
+    pub providers: Vec<ProviderConfig>,
+    /// Token prices, used to turn usage into cost. Sitewright ships no prices of its own.
+    pub prices: Vec<ModelPrice>,
+}
+
+impl LlmConfig {
+    /// The provider with this id, or the default provider when `id` is `None`.
+    pub fn provider(&self, id: Option<&str>) -> Option<&ProviderConfig> {
+        match id.or(self.default.as_deref()) {
+            Some(id) => self.providers.iter().find(|p| p.id == id),
+            None => self.providers.first(),
+        }
+    }
+
+    /// The price entry for a model name, if the user configured one.
+    pub fn price(&self, model: &str) -> Option<&ModelPrice> {
+        self.prices.iter().find(|p| p.model == model)
+    }
+}
+
+/// One configured LLM endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderConfig {
+    /// Name used to refer to this provider in the UI, CLI and `llm.default`.
+    pub id: String,
+    pub kind: ProviderKind,
+    /// API base URL. Required for `openai_compat`; optional for the others.
+    pub base_url: Option<String>,
+    /// Model name. For Azure OpenAI this is the deployment name.
+    pub model: String,
+    #[serde(default)]
+    pub auth: AuthStyle,
+    /// Name of the API key in `secrets.toml`. Omit for endpoints without a key (Ollama).
+    pub key_ref: Option<String>,
+    /// Seconds to wait for the response to start, and between streamed chunks.
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Retries after a rate-limit, server or network error.
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// Upper bound on tokens generated per model call. Omitted from requests when unset.
+    pub max_output_tokens: Option<u32>,
+    /// Extra fields merged into every request body, for provider-specific options such
+    /// as `reasoning_effort`.
+    #[serde(default)]
+    pub extra_body: toml::Table,
+}
+
+fn default_timeout_secs() -> u64 {
+    300
+}
+fn default_max_retries() -> u32 {
+    3
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    /// Chat Completions: OpenAI, Azure OpenAI, OpenRouter, Groq, Ollama and others.
+    OpenaiCompat,
+    /// Anthropic Messages API.
+    Anthropic,
+    /// Google Gemini generateContent.
+    Gemini,
+}
+
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderKind::OpenaiCompat => "openai_compat",
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::Gemini => "gemini",
+        }
+    }
+}
+
+/// How the API key is sent (only `openai_compat` has a choice).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStyle {
+    /// `Authorization: Bearer <key>`
+    #[default]
+    Bearer,
+    /// `api-key: <key>` (Azure OpenAI)
+    ApiKeyHeader,
+}
+
+/// Price of one model, in US dollars per million tokens.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPrice {
+    pub model: String,
+    pub input_per_mtok: f64,
+    pub output_per_mtok: f64,
+}
+
+impl ModelPrice {
+    /// Cost in US dollars of the given token counts.
+    pub fn cost(&self, input_tokens: u64, output_tokens: u64) -> f64 {
+        (input_tokens as f64 * self.input_per_mtok + output_tokens as f64 * self.output_per_mtok)
+            / 1_000_000.0
+    }
+}
+
+/// Limits on agent runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentConfig {
+    /// Most model calls in one run.
+    pub max_turns: u32,
+    /// Most tokens (input plus output, summed over all calls) in one run.
+    pub max_run_tokens: u64,
+    /// Most US dollars spent across all runs per UTC day. Needs `llm.prices` for the
+    /// model in use; without a price, cost is unknown and this cap cannot apply.
+    pub daily_spend_cap_usd: f64,
+    /// Most runs in progress at once (always at most one per site).
+    pub max_concurrent_runs: u32,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            max_turns: 40,
+            max_run_tokens: 1_000_000,
+            daily_spend_cap_usd: 5.0,
+            max_concurrent_runs: 2,
+        }
+    }
+}
+
 /// Where the configuration came from, after resolving flags, environment and defaults.
 #[derive(Debug, Clone)]
 pub struct Loaded {
@@ -298,6 +437,33 @@ impl Config {
                 "domains.admin_host: {host:?} is not a lowercase hostname"
             )));
         }
+        let mut seen = std::collections::HashSet::new();
+        for provider in &self.llm.providers {
+            if provider.id.is_empty() || !seen.insert(provider.id.as_str()) {
+                return Err(Error::Config(format!(
+                    "llm.providers: id {:?} is empty or used twice",
+                    provider.id
+                )));
+            }
+            if provider.kind == ProviderKind::OpenaiCompat && provider.base_url.is_none() {
+                return Err(Error::Config(format!(
+                    "llm.providers: {:?} needs a base_url",
+                    provider.id
+                )));
+            }
+        }
+        if let Some(default) = &self.llm.default
+            && !self.llm.providers.iter().any(|p| &p.id == default)
+        {
+            return Err(Error::Config(format!(
+                "llm.default: no provider with id {default:?}"
+            )));
+        }
+        if self.agent.max_turns == 0 || self.agent.max_concurrent_runs == 0 {
+            return Err(Error::Config(
+                "agent.max_turns and agent.max_concurrent_runs must be at least 1".into(),
+            ));
+        }
         if self.sites.keep_releases == 0 {
             return Err(Error::Config(
                 "sites.keep_releases must be at least 1".into(),
@@ -361,6 +527,61 @@ mod tests {
         assert!(config.domains.in_zone("a.dev.example.com"));
         assert!(!config.domains.in_zone("dev.example.com"));
         assert!(!config.domains.in_zone("xdev.example.com"));
+    }
+
+    #[test]
+    fn parses_llm_providers_and_prices() {
+        let config = Config::from_toml(
+            r#"
+            [llm]
+            default = "azure"
+
+            [[llm.providers]]
+            id = "azure"
+            kind = "openai_compat"
+            base_url = "https://example.openai.azure.com/openai/v1/"
+            model = "gpt-5-mini"
+            auth = "api_key_header"
+            key_ref = "azure"
+            extra_body = { reasoning_effort = "low" }
+
+            [[llm.providers]]
+            id = "claude"
+            kind = "anthropic"
+            model = "claude-x"
+            key_ref = "anthropic"
+
+            [[llm.prices]]
+            model = "gpt-5-mini"
+            input_per_mtok = 0.25
+            output_per_mtok = 2.0
+
+            [agent]
+            daily_spend_cap_usd = 5.0
+            "#,
+        )
+        .unwrap();
+        let azure = config.llm.provider(None).unwrap();
+        assert_eq!(azure.id, "azure");
+        assert_eq!(azure.auth, AuthStyle::ApiKeyHeader);
+        assert_eq!(azure.timeout_secs, 300);
+        assert_eq!(
+            config.llm.provider(Some("claude")).unwrap().kind,
+            ProviderKind::Anthropic
+        );
+        assert!(config.llm.provider(Some("nope")).is_none());
+        let price = config.llm.price("gpt-5-mini").unwrap();
+        assert!((price.cost(1_000_000, 500_000) - 1.25).abs() < 1e-9);
+        assert!(config.llm.price("other").is_none());
+        assert_eq!(config.agent.max_turns, 40);
+
+        assert!(Config::from_toml("[llm]\ndefault = \"x\"").is_err());
+        assert!(
+            Config::from_toml(
+                "[[llm.providers]]\nid = \"a\"\nkind = \"openai_compat\"\nmodel = \"m\""
+            )
+            .is_err()
+        );
     }
 
     #[test]

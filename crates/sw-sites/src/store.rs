@@ -671,6 +671,18 @@ impl SiteStore {
         })
     }
 
+    /// Check the working tree against the publishing rules.
+    pub async fn validate(&self, name: &str) -> Result<crate::validate::Report> {
+        let site = self.get(name).await?;
+        self.validate_site(&site).await
+    }
+
+    async fn validate_site(&self, site: &Site) -> Result<crate::validate::Report> {
+        let repo = self.inner.data.site_repo(&site.name);
+        let limits = self.inner.limits.clone();
+        blocking(move || Ok(crate::validate::validate(&repo, &limits)?)).await
+    }
+
     // ------------------------------------------------------------------ publishing
 
     /// Commit the working tree and make it live. If the new release fails its health
@@ -703,10 +715,11 @@ impl SiteStore {
         let repo = self.inner.data.site_repo(&site.name);
         let url = self.site_url(site).await?;
 
-        if !repo.join("index.html").is_file() {
+        let report = self.validate_site(site).await?;
+        if !report.ok() {
             return Err(SiteError::Validation {
                 site: site.name.clone(),
-                problems: vec!["index.html is missing".into()],
+                problems: report.errors().map(ToString::to_string).collect(),
             });
         }
 

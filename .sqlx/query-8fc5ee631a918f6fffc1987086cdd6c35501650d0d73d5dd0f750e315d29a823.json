@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO agent_runs (site_name, prompt, status, provider, model, created_at) VALUES (?1, ?2, 'running', ?3, ?4, ?5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "8fc5ee631a918f6fffc1987086cdd6c35501650d0d73d5dd0f750e315d29a823"
+}
