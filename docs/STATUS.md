@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M0 in progress)_
+_Last updated: 2026-11-15 (M0 done except the nginx bootstrap; M1 next)_
 
 ## Needs from Matthew
 
@@ -27,11 +27,17 @@ _Last updated: 2026-11-15 (M0 in progress)_
    classifier refused to let the agent write its own allow-list, which is reasonable. The
    exact file contents are in [development.md](development.md#claude-code-permissions).
 
+3. **Set `*.dev.machandler.com` to DNS only (grey cloud) in Cloudflare.** It currently resolves
+   to Cloudflare addresses (104.21.x / 172.67.x), so it is either proxied or missing and
+   covered by a proxied `*.machandler.com` wildcard. Plain-HTTP sites still work through the
+   proxy, so this does not block M1 to M5, but M6's standalone TLS tests on port 18443 need
+   the name to resolve straight to the VPS (107.174.181.11).
+
 ## Milestones
 
 | Milestone | State |
 | --- | --- |
-| M0 Scaffold | in progress |
+| M0 Scaffold | done, pending bootstrap (Needs #1) |
 | M1 Serve sites (proxy mode) | not started |
 | M2 Agent with tools, one provider | not started |
 | M3 Web UI and passkeys | not started |
@@ -48,9 +54,14 @@ _Last updated: 2026-11-15 (M0 in progress)_
   user unit.
 - CI workflow, cargo-deny, Dependabot, licenses, ADR-0001 to 0003, docs skeleton.
 
+- Public repo https://github.com/matthew-chandler/sitewright, `main` protected (requires the
+  `ci-ok` check, admins included), CI green.
+- First deploy to the VPS: the daemon runs as a systemd user service and answers `hello` on
+  `127.0.0.1:18080`.
+
 ## In progress
 
-- M0: GitHub repo, branch protection, green CI, first deploy to the VPS.
+- M1.
 
 ## Next
 
