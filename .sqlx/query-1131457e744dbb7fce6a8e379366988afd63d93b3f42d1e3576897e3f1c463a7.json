@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO checks (ts, site_id, kind, ok, latency_ms, status, cert_days, detail) VALUES (?1, ?2, 'uptime', ?3, ?4, ?5, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "1131457e744dbb7fce6a8e379366988afd63d93b3f42d1e3576897e3f1c463a7"
+}

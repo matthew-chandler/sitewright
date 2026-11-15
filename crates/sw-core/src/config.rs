@@ -24,6 +24,7 @@ pub struct Config {
     pub sites: SitesConfig,
     pub llm: LlmConfig,
     pub agent: AgentConfig,
+    pub metrics: MetricsConfig,
 }
 
 /// How the daemon is exposed to the network.
@@ -362,6 +363,32 @@ impl Default for AgentConfig {
             max_run_tokens: 1_000_000,
             daily_spend_cap_usd: 5.0,
             max_concurrent_runs: 2,
+        }
+    }
+}
+
+/// Metrics collection and uptime checks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Seconds between uptime checks of each site. 0 turns the checks off.
+    pub uptime_interval_secs: u64,
+    /// A check slower than this many milliseconds marks the site as degraded.
+    pub slow_ms: u64,
+    /// Check sites through the daemon's own listener instead of public DNS. For local
+    /// development, where `*.localhost` names do not resolve for the daemon.
+    pub uptime_resolve_local: bool,
+    /// Days raw requests, events and checks are kept. Daily rollups are kept forever.
+    pub retention_days: u32,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            uptime_interval_secs: 60,
+            slow_ms: 2000,
+            uptime_resolve_local: false,
+            retention_days: 30,
         }
     }
 }

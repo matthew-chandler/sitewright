@@ -76,6 +76,17 @@ See [providers.md](providers.md) for the provider keys and examples.
 
 Hitting a limit ends the run cleanly with status `limit` and a message naming the limit.
 
+### `[metrics]`
+
+See [metrics.md](metrics.md) for what is collected.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `uptime_interval_secs` | `60` | Seconds between uptime checks of each site. `0` turns them off. |
+| `slow_ms` | `2000` | A check slower than this marks the site as degraded. |
+| `uptime_resolve_local` | `false` | Check sites through the daemon's own listener instead of public DNS. For local development, where `*.localhost` does not resolve for the daemon. |
+| `retention_days` | `30` | Days raw requests, events and checks are kept. Daily rollups are kept forever. |
+
 ## Secrets
 
 `secrets.toml` in the data directory holds API keys:

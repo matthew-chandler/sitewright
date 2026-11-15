@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT site_id, ok, latency_ms, cert_days FROM (\n               SELECT site_id, ok, latency_ms, cert_days, row_number() OVER (PARTITION BY site_id ORDER BY ts DESC, id DESC) AS n\n               FROM checks WHERE ts >= ?1)\n           WHERE n <= 2 ORDER BY site_id, n",
+  "describe": {
+    "columns": [
+      {
+        "name": "site_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "checks",
+            "name": "site_id"
+          }
+        }
+      },
+      {
+        "name": "ok",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "checks",
+            "name": "ok"
+          }
+        }
+      },
+      {
+        "name": "latency_ms",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "checks",
+            "name": "latency_ms"
+          }
+        }
+      },
+      {
+        "name": "cert_days",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "checks",
+            "name": "cert_days"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "605b5d13d6549b9c12286629ba522235a638ed80493386bf1b1d6128ea59ec28"
+}

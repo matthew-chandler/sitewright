@@ -53,6 +53,14 @@ nothing else.
   improvements (clarity of the first screen, readability on a phone, missing content),
   make them, and say what you chose. Do not redesign everything.
 
+## Analytics and the dashboard
+
+- Keep the line `<script src="/_sw/a.js" defer></script>` on every page, and add it to new
+  pages. It is served by the host; do not create that file.
+- If your change adds, removes or renames something visitors interact with or a whole
+  section of the site, the dashboard may no longer fit. After publishing, load the
+  `design-dashboard` skill and update it. For small edits, leave the dashboard alone.
+
 ## When the request does not fit a static site
 
 Sites here are static files. There is no server code, database, login or form handler, and

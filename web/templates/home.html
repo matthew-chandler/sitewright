@@ -15,7 +15,11 @@
       <span class="dot {{ site.state }}" aria-hidden="true"></span>
       <strong>{{ site.title }}</strong>
     </a>
-    <span class="muted">{{ site.name }} · {{ site.state_label }} · deployed {{ site.deployed }}</span>
+    <span class="muted">{{ site.name }} · {{ site.state_label }}{% if !site.uptime.is_empty() %} · {{ site.uptime }}{% endif %} · deployed {{ site.deployed }}</span>
+    <span class="spark-row">
+      <svg class="spark" viewBox="0 0 70 20" role="img" aria-label="{{ site.views_7d }} page views in the last 7 days"><polyline points="{{ site.spark }}"/></svg>
+      <span class="muted">{{ site.views_7d }} views in 7 days</span>
+    </span>
     <a class="external" href="{{ site.url }}" target="_blank" rel="noopener">{{ site.url }}</a>
   </li>
   {% endfor %}

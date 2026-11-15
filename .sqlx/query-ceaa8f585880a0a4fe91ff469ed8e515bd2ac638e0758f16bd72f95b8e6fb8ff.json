@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO daily_rollups (site_id, day, views, visitors, errors, p95_ms, uptime_pct)\n             VALUES (?1, date(?2 / 1000, 'unixepoch'), ?3, ?4, ?5, ?6, ?7)\n             ON CONFLICT (site_id, day) DO UPDATE SET\n                views = excluded.views, visitors = excluded.visitors, errors = excluded.errors,\n                p95_ms = excluded.p95_ms, uptime_pct = excluded.uptime_pct",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "ceaa8f585880a0a4fe91ff469ed8e515bd2ac638e0758f16bd72f95b8e6fb8ff"
+}

@@ -28,7 +28,9 @@ choices, and say afterwards what you assumed.
 4. **Validate.** Call `validate_site`. Fix every error. Fix warnings unless there is a
    reason not to.
 5. **Publish.** Call `publish_site` with a one-line message such as "Initial site".
-6. **Report.** Tell the user what you built, what you assumed, and the URL.
+6. **Dashboard.** Load the `design-dashboard` skill and save a dashboard with a few panels
+   specific to this site.
+7. **Report.** Tell the user what you built, what you assumed, and the URL.
 
 ## What every page needs
 
@@ -40,6 +42,25 @@ choices, and say afterwards what you assumed.
 - Real content. Write the actual text the site needs; never "Lorem ipsum" or
   "Your content here". If facts are unknown (opening hours, prices), write plausible
   placeholder content and list it in your report so the user can correct it.
+
+## Analytics
+
+Put this line in the `<head>` of every page:
+
+```html
+<script src="/_sw/a.js" defer></script>
+```
+
+It is a tiny, cookie-free script served by the host itself (it is not an external
+resource, and you must not create the file). It records page views. Where the site has a
+meaningful interaction, also record it as a custom event, for example when a visitor
+searches or filters a list:
+
+```js
+if (window.sw) sw("search", { q: query, results: count });
+```
+
+Use lowercase event names and a few short values. Never send personal data.
 
 ## Design rules
 

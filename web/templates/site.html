@@ -3,7 +3,10 @@
 {% block content %}
 <div class="heading">
   <h1>{{ title }}</h1>
-  {% if published %}<a class="button" href="{{ url }}" target="_blank" rel="noopener">Open site</a>{% endif %}
+  <span class="row">
+    <a class="button" href="/sites/{{ name }}/dashboard">Dashboard</a>
+    {% if published %}<a class="button" href="{{ url }}" target="_blank" rel="noopener">Open site</a>{% endif %}
+  </span>
 </div>
 <p class="muted">{{ name }} · {% if published %}<a class="external" href="{{ url }}" target="_blank" rel="noopener">{{ url }}</a>{% else %}not published yet{% endif %}</p>
 

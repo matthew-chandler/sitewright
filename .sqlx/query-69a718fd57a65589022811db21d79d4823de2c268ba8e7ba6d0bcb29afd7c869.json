@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO dashboards (site_id, spec, version, updated_at) VALUES (?1, ?2, 1, ?3)\n           ON CONFLICT (site_id) DO UPDATE SET spec = excluded.spec, version = dashboards.version + 1, updated_at = excluded.updated_at\n           RETURNING version",
+  "describe": {
+    "columns": [
+      {
+        "name": "version",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "dashboards",
+            "name": "version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "69a718fd57a65589022811db21d79d4823de2c268ba8e7ba6d0bcb29afd7c869"
+}

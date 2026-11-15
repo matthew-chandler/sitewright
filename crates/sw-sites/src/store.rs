@@ -1105,7 +1105,8 @@ impl SiteStore {
     /// Rebuild the routing table from the database and swap it in.
     pub async fn reload_routes(&self) -> Result<()> {
         let rows = sqlx::query!(
-            r#"SELECT h.hostname, s.id as "site_id!", s.name, r.id as "release_id!", r.sha
+            r#"SELECT h.hostname, s.id as "site_id!", s.name, r.id as "release_id!", r.sha,
+                      (SELECT p.hostname FROM site_hostnames p WHERE p.site_id = s.id ORDER BY p.is_primary DESC, p.id LIMIT 1) as "primary_hostname!"
                FROM site_hostnames h
                JOIN sites s ON s.id = h.site_id
                JOIN releases r ON r.id = s.current_release
@@ -1131,6 +1132,7 @@ impl SiteStore {
                         site,
                         release_id: row.release_id,
                         sha: row.sha,
+                        primary_hostname: row.primary_hostname,
                         root,
                     });
                     by_site.insert(row.site_id, route.clone());

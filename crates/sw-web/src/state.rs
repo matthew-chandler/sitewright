@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use sw_agent::Agent;
 use sw_core::Config;
-use sw_metrics::{RequestLog, VisitorHasher};
+use sw_metrics::{Metrics, RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
 
 use crate::auth::Auth;
@@ -17,6 +17,7 @@ pub struct AppState {
     pub store: SiteStore,
     pub request_log: RequestLog,
     pub hasher: Arc<VisitorHasher>,
+    pub metrics: Metrics,
     pub agent: Agent,
     pub domains: DomainChecker,
     pub providers: Providers,

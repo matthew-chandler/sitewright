@@ -13,6 +13,7 @@ use sqlx::SqlitePool;
 use sw_core::time::{MS_PER_DAY, now_ms};
 use sw_core::{Config, SiteName};
 use sw_llm::{ChatRequest, Event, LlmProvider, Message, StopReason, ToolCall, Usage};
+use sw_metrics::Metrics;
 use sw_sites::{DomainChecker, SiteError, SiteStatus, SiteStore};
 use tokio::sync::{Semaphore, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -136,6 +137,7 @@ struct Inner {
     store: SiteStore,
     domains: DomainChecker,
     skills: Skills,
+    metrics: Metrics,
     config: Arc<Config>,
     providers: Arc<dyn ProviderSource>,
     active: Mutex<HashMap<i64, Active>>,
@@ -165,6 +167,7 @@ impl Agent {
         store: SiteStore,
         domains: DomainChecker,
         skills: Skills,
+        metrics: Metrics,
         config: Arc<Config>,
         providers: Arc<dyn ProviderSource>,
     ) -> Result<Self, AgentError> {
@@ -184,6 +187,7 @@ impl Agent {
                 store,
                 domains,
                 skills,
+                metrics,
                 config,
                 providers,
                 active: Mutex::new(HashMap::new()),
@@ -476,6 +480,7 @@ impl Job {
             store: self.inner.store.clone(),
             domains: self.inner.domains.clone(),
             skills: self.inner.skills.clone(),
+            metrics: self.inner.metrics.clone(),
             site: self.site.clone(),
             may_create: self.may_create,
             http_port: self

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT site_id, day, views FROM daily_rollups WHERE day >= date(?1 / 1000, 'unixepoch')",
+  "describe": {
+    "columns": [
+      {
+        "name": "site_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "daily_rollups",
+            "name": "site_id"
+          }
+        }
+      },
+      {
+        "name": "day",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "daily_rollups",
+            "name": "day"
+          }
+        }
+      },
+      {
+        "name": "views",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "daily_rollups",
+            "name": "views"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5fb50a6f410a098d538eb14828a791a57b49980839252f4fb1361ab6de4a0622"
+}

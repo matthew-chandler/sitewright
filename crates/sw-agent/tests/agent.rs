@@ -48,6 +48,9 @@ async fn env_with(provider: ScriptedProvider, extra: &str) -> Env {
     sw_core::db::migrate(&db, &data.backups_dir())
         .await
         .unwrap();
+    let metrics = sw_metrics::Metrics::open(db.clone(), &data.db_file(), 2000)
+        .await
+        .unwrap();
     let toml = format!(
         "[domains]\nzones = [\"example.com\"]\npublic_scheme = \"https\"\n\
          [[llm.prices]]\nmodel = \"mock-model\"\ninput_per_mtok = 1.0\noutput_per_mtok = 10.0\n{extra}"
@@ -59,6 +62,7 @@ async fn env_with(provider: ScriptedProvider, extra: &str) -> Env {
         store.clone(),
         DomainChecker::new(),
         Skills::new(Some(skills_dir.clone())),
+        metrics.clone(),
         config,
         Arc::new(Fixed(provider.clone())),
     )
@@ -222,7 +226,7 @@ async fn a_create_run_builds_and_publishes_a_site() {
             .contains("- Name: `hikes`\n- It does not exist yet")
             && requests[0].system.contains("- `create-site`:")
     );
-    assert_eq!(requests[0].tools.len(), 14);
+    assert_eq!(requests[0].tools.len(), 17);
     assert!(
         matches!(&requests[1].messages[2], Message::Tool { name, is_error: false, .. } if name == "create_site")
     );
@@ -559,6 +563,9 @@ async fn gated_env(extra: &str) -> (tempfile::TempDir, SiteStore, Agent, Arc<Gat
     sw_core::db::migrate(&db, &data.backups_dir())
         .await
         .unwrap();
+    let metrics = sw_metrics::Metrics::open(db.clone(), &data.db_file(), 2000)
+        .await
+        .unwrap();
     let config = Arc::new(
         Config::from_toml(&format!("[domains]\nzones = [\"example.com\"]\n{extra}")).unwrap(),
     );
@@ -570,6 +577,7 @@ async fn gated_env(extra: &str) -> (tempfile::TempDir, SiteStore, Agent, Arc<Gat
         store.clone(),
         DomainChecker::new(),
         Skills::new(Some(skills_dir.clone())),
+        metrics.clone(),
         config,
         Arc::new(Fixed(gated.clone())),
     )
@@ -623,10 +631,18 @@ async fn runs_interrupted_by_a_restart_are_marked_failed() {
     let run = agent.start(request("a", "x", false)).await.unwrap();
     // A new manager on the same database stands in for a restarted daemon.
     let config = Arc::new(Config::from_toml("[domains]\nzones = [\"example.com\"]\n").unwrap());
+    let metrics = sw_metrics::Metrics::open(
+        store.db().clone(),
+        &DataDir::new(_dir.path()).db_file(),
+        2000,
+    )
+    .await
+    .unwrap();
     let restarted = Agent::new(
         store,
         DomainChecker::new(),
         Skills::new(None),
+        metrics.clone(),
         config,
         Arc::new(Fixed(gated)),
     )

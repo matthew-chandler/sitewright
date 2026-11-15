@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · {{ title }} · Sitewright{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1><a href="/sites/{{ name }}">{{ title }}</a> <span class="muted">dashboard</span></h1>
+  <label class="sr-only" for="dash-days">Time range</label>
+  <select id="dash-days">
+    <option value="7">Last 7 days</option>
+    <option value="30" selected>Last 30 days</option>
+    <option value="90">Last 90 days</option>
+  </select>
+</div>
+
+<section>
+  <div class="heading">
+    <h2>For this site</h2>
+    <form hx-post="/sites/{{ name }}/dashboard/regenerate" hx-target="find .status" hx-disabled-elt="find button">
+      <button type="submit" {% if busy %}disabled{% endif %}>{% if has_ai %}Regenerate{% else %}Design with AI{% endif %}</button>
+      <span class="status"></span>
+    </form>
+  </div>
+  {% if has_ai %}
+  <p class="muted">Panels chosen by the agent for what this site does. Updated {{ updated }}.</p>
+  {% else %}
+  <p class="empty">No site-specific panels yet. The agent can look at the site and pick metrics that fit it.</p>
+  {% endif %}
+  <div id="dash-custom" class="panels"></div>
+</section>
+
+<section>
+  <h2>Overview</h2>
+  <div id="dash-standard" class="panels" data-site="{{ name }}"></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/vega.min.js"></script>
+<script src="/static/vendor/vega-lite.min.js"></script>
+<script src="/static/vendor/vega-interpreter.min.js"></script>
+<script src="/static/vendor/vega-embed.min.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

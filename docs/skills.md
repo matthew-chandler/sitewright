@@ -27,7 +27,9 @@ means instructions are loaded only when they are relevant.
 | `delete-site` | Explain what deletion does (offline at once, 7-day recovery, DNS untouched), then raise the confirmation only the user can answer. |
 | `setup-domain` | Explain the DNS options, read `check_domain` results, give the exact record to add; wildcard override rules and Cloudflare notes. |
 
-`design-dashboard` and `export-site` arrive with the tools they describe (M5 and M6).
+| `design-dashboard` | Look at what the site does, choose metrics that fit it, write and test a SQL query and a Vega-Lite chart per panel, save the dashboard. |
+
+`export-site` arrives with its tool in M6.
 
 Built-in skills live in [`skills/`](../skills) in the repository and are compiled into the
 binary. They update with the binary. CI validates each one with the reference validator

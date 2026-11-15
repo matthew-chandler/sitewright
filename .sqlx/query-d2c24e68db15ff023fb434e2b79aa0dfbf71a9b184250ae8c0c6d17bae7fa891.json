@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT site_id, 100.0 * avg(ok) AS \"pct?: f64\" FROM checks WHERE ts >= ?1 GROUP BY site_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "site_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "checks",
+            "name": "site_id"
+          }
+        }
+      },
+      {
+        "name": "pct?: f64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d2c24e68db15ff023fb434e2b79aa0dfbf71a9b184250ae8c0c6d17bae7fa891"
+}
