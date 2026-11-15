@@ -31,12 +31,15 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 | Runaway LLM cost | Per-run turn and token caps, a per-day spend cap, one run per site and a cap on parallel runs. Limits end a run cleanly. |
 | Leaked secrets | API keys live in `secrets.toml` (mode 0600; the daemon refuses a file other users can read), never in `config.toml` or the database. They are write-only in the UI, absent from `Debug` output, and error messages are built without request URLs or key material. |
 | Enrollment-link or API-token theft | Both are random 256-bit values stored only as hashes. Invites are single-use and short-lived. API tokens work only under `/api` and cannot create enrollment links (that endpoint exists only on the Unix socket). |
+| Agent-written SQL | A separate read-only connection; an SQLite authorizer that allows only `SELECT` on the metric views with an allowlist of functions; views scoped to one site by construction; a 5-second limit and a 1000-row limit. See [metrics.md](metrics.md#the-sql-sandbox). |
+| A dashboard spec that loads or leaks data | Specs are data, not code: unknown fields are rejected, chart descriptions may not contain `data`, URLs or links, and the server injects the rows. Charts render with Vega's expression interpreter, so the admin UI needs no `unsafe-eval`. |
+| Abuse of the event beacon | Strict validation, a 2 KB body limit, a per-visitor rate limit, bots ignored. Events can only add rows for the site whose hostname received them. |
 | Abuse of `check_domain` to probe internal services | One GET to a fixed path with a random token, no redirects, and only "matched or not" is reported. |
-| Visitor privacy | No raw IP addresses are stored: visitors are a hash of IP, user agent and site, salted with a key that rotates (and is destroyed) daily. Query strings are not logged. |
+| Visitor privacy | No raw IP addresses are stored: visitors are a hash of IP, user agent and site, salted with a key that rotates (and is destroyed) daily. Query strings are not logged. The beacon sets no cookies, stores nothing on the device and honours Do Not Track and Global Privacy Control. Raw rows are kept 30 days. |
 | Vulnerable dependencies | `cargo deny` (advisories, licenses, bans) in CI; Dependabot. One TLS stack (`rustls` + `ring`); OpenSSL is banned. Current, justified advisory exceptions are listed in `deny.toml`. |
 
-Arriving with later milestones: the SQL sandbox for dashboards (M5); certificate issuance
-limited to known hostnames, the hardened systemd unit and signed updates (M6).
+Arriving with M6: certificate issuance limited to known hostnames, the hardened systemd
+unit and signed updates.
 
 ## What is deliberately out of scope in v1
 

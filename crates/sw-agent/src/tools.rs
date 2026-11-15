@@ -16,6 +16,7 @@ pub struct ToolContext {
     pub store: SiteStore,
     pub domains: DomainChecker,
     pub skills: crate::skills::Skills,
+    pub metrics: sw_metrics::Metrics,
     /// The site this run is bound to.
     pub site: String,
     /// Whether the run was started to create `site` (so `create_site` is allowed).
@@ -144,6 +145,30 @@ pub fn definitions() -> Vec<ToolDef> {
             "delete_site",
             "Ask the user to confirm deleting this site. Does not delete anything itself: the site is removed only after the user confirms.",
             none(),
+        ),
+        def(
+            "metrics_schema",
+            "Describe the metrics you can query for this site: the views, their columns, the query parameters and the dashboard format.",
+            none(),
+        ),
+        def(
+            "run_readonly_query",
+            "Run one read-only SELECT over this site's metric views and return the rows. Use it to explore the data and to test a dashboard panel's query.",
+            schema(
+                json!({
+                    "sql": { "type": "string", "description": "One SELECT over v_requests, v_events, v_checks or v_daily. May use :site_id, :from and :to." },
+                    "days": { "type": "integer", "description": "Length of the time range ending now, 1 to 90. Default 30." },
+                }),
+                &["sql"],
+            ),
+        ),
+        def(
+            "save_dashboard",
+            "Validate and store this site's dashboard, replacing the previous one. Every panel's query is run first; problems are returned for you to fix.",
+            schema(
+                json!({ "spec": { "type": "object", "description": "The dashboard: {\"version\": 1, \"panels\": [...]}. See metrics_schema." } }),
+                &["spec"],
+            ),
         ),
         def(
             "load_skill",
@@ -303,6 +328,39 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let hostname = required("hostname")?;
                 ToolOutcome::ok(serde_json::to_value(ctx.domains.check(hostname, ctx.http_port).await).unwrap_or(Value::Null))
             }
+            "metrics_schema" => ToolOutcome::ok(sw_metrics::dashboard::metrics_schema()),
+            "run_readonly_query" => {
+                let sql = required("sql")?;
+                let days = args.get("days").and_then(Value::as_i64).unwrap_or(30).clamp(1, 90);
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let (from, to) = sw_metrics::dashboard::range(days);
+                let result = ctx.metrics.sandbox.query(site.id, &from, &to, sql).await.map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({
+                    "columns": result.columns,
+                    "rows": result.rows,
+                    "row_count": result.rows.len(),
+                    "truncated": result.truncated,
+                    "range": { "from": from, "to": to },
+                }))
+            }
+            "save_dashboard" => {
+                let spec = args.get("spec").filter(|s| s.is_object()).ok_or_else(|| ToolOutcome::error("missing required object argument \"spec\""))?;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                match sw_metrics::dashboard::validate(&ctx.metrics.sandbox, site.id, spec).await {
+                    Ok(parsed) => {
+                        let version = sw_metrics::dashboard::save(&ctx.metrics.db, site.id, &parsed).await.map_err(|e| {
+                            tracing::error!(error = %e, "could not save a dashboard");
+                            ToolOutcome::error("the server could not save the dashboard")
+                        })?;
+                        ToolOutcome::ok(json!({ "saved": true, "panels": parsed.panels.len(), "version": version }))
+                    }
+                    Err(problems) => ToolOutcome {
+                        content: json!({ "error": "the dashboard was not saved; fix these problems and try again", "problems": problems }).to_string(),
+                        is_error: true,
+                        effect: None,
+                    },
+                }
+            }
             "load_skill" => {
                 let name = required("name")?;
                 let (instructions, files) = ctx.skills.load(name).map_err(ToolOutcome::error)?;
@@ -356,6 +414,9 @@ mod tests {
                 "publish_site",
                 "rollback_site",
                 "delete_site",
+                "metrics_schema",
+                "run_readonly_query",
+                "save_dashboard",
                 "load_skill",
                 "read_skill_file",
                 "check_domain"

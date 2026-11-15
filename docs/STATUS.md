@@ -3,25 +3,28 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M4 done; M5 next)_
+_Last updated: 2026-11-15 (M5 done; M6 next)_
 
 ## Needs from Matthew
 
-1. **Get a certificate for the admin hostname (needs sudo).** The nginx bootstrap copied
-   the `fireworks.machandler.com` Let's Encrypt certificate into the admin block, so
-   Cloudflare rejects the origin (error 525) on `https://sitewright-dev.machandler.com`.
-   On the VPS:
+1. **Make the admin UI reachable over HTTPS.** `https://sitewright-dev.machandler.com`
+   still returns Cloudflare error 525, although the origin now has a valid Let's Encrypt
+   certificate for the name (thanks for running certbot) and every handshake tried against
+   it directly succeeds. Options, in order of effort:
 
-   ```sh
-   sudo certbot --nginx -d sitewright-dev.machandler.com
-   ```
+   - **Quickest:** switch the `sitewright-dev` record to **DNS only** (grey cloud). The
+     phone then talks straight to nginx, which has the valid certificate.
+   - **Behind the proxy:** re-run the updated `scripts/vps-bootstrap.sh` (it now copies the
+     `include /etc/letsencrypt/options-ssl-nginx.conf;` line the first version missed, and
+     reuses the new certificate), so the admin block has exactly the TLS settings of the
+     working sites. Whether that line is the cause is unconfirmed.
+   - **If it is still 525:** load the page, then send the output of
+     `sudo tail -n 5 /var/log/nginx/error.log`; that line names the handshake failure.
 
-   Nothing else needs re-running. (`scripts/vps-bootstrap.sh` now does this itself, and a
-   later re-run reuses the certificate.) This blocks only the M3 phone test: passkeys need
-   HTTPS.
+   This blocks only the phone checklist: passkeys need HTTPS.
 
 2. **Run the phone checklist** in [testing.md](testing.md#manual-checklist-phone-flows)
-   once #1 is done. On the VPS as devtest:
+   once #1 is done. On the VPS **as devtest, with the data directory named**:
    `~/bin/sitewright --data-dir ~/sitewright-data admin invite` prints the enrollment link
    to open on your phone. Tell me what fails, if anything.
 
@@ -41,7 +44,7 @@ to DNS only.
 | M2 Agent with tools, one provider | done |
 | M3 Web UI and passkeys | done, pending the phone checklist (Needs #1, #2) |
 | M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
-| M5 Metrics and dashboards | not started |
+| M5 Metrics and dashboards | done |
 | M6 Standalone TLS, updates, export, v1.0.0 | not started |
 
 ## Done
@@ -92,13 +95,21 @@ to DNS only.
   blocks, thought signatures) unchanged. 110 tests. Live on Azure the agent now loads
   `create-site`, reads its templates and builds from them.
 
+- **M5:** the event beacon (`/_sw/a.js`, `/_sw/e`), uptime checks with up / degraded /
+  down status, per-minute rollups and hourly pruning, the read-only SQL sandbox
+  (authorizer, per-site temporary views, time and row limits), dashboard specs validated
+  by running every query, a default dashboard, the `design-dashboard` skill with
+  `metrics_schema`, `run_readonly_query` and `save_dashboard`, a dashboard page drawn with
+  vendored Vega-Lite (no `eval`), and the home status grid with uptime and sparklines.
+  130 tests.
+
 ## In progress
 
-- M5: metrics beacon, uptime checks, rollups, default and AI dashboards.
+- M6: standalone TLS (ACME), signed releases and self-update, export, install, v1.0.0.
 
 ## Next
 
-- M6: standalone TLS (ACME), signed releases and self-update, export, install, v1.0.0.
+- Nothing after M6; v1.0.0 is tagged there.
 
 ## Decisions worth knowing (beyond the ADRs)
 
@@ -106,9 +117,15 @@ to DNS only.
   (`scripts/sqlx-prepare.sh --check`). Run the script after touching a query or migration.
 - `deny.toml` ignores RUSTSEC-2026-0459 (bundled SQLite, local-only attack) with a written
   justification, because no sqlx release accepts the fixed `libsqlite3-sys` yet.
-- Tools and skills that belong to later subsystems arrive with them: `metrics_schema`, `run_readonly_query` and `save_dashboard` in
-  M5, `export_site` in M6, each with its skill
-  (`design-dashboard`, `export-site`).
+- The AI dashboard is designed inside the create run (the `create-site` skill's last step)
+  and updated by edit runs when they change what visitors can do, rather than by a
+  separate automatic run: one run, one cost, and the agent already has the site in
+  context. **Regenerate** on the dashboard page starts a dedicated run.
+- Uptime checks go through public DNS as the plan says; `metrics.uptime_resolve_local`
+  exists for local development and tests, where `*.localhost` does not resolve.
+- `vega-interpreter` ships only as an ES module, so `scripts/vendor-vega.sh` repackages it
+  as a classic script. This keeps the admin UI free of a bundler and of `unsafe-eval`.
+- Tools and skills that belong to later subsystems arrive with them: `export_site` and the `export-site` skill in M6.
 - Skill folders use `references/` and `assets/` (the Agent Skills spec's names) rather
   than the plan's `templates/`, so the reference validator accepts them.
 - Anthropic and Gemini keys are optional inputs and were not provided, so those adapters

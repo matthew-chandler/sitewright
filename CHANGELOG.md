@@ -22,3 +22,6 @@ All notable changes to this project are documented here. The format follows
   settings with "Test connection", API tokens, and `sitewright admin invite`.
 - Skills and more providers (M4): Agent Skills loaded on demand, four built-in skills,
   user skills in the data directory, and adapters for Anthropic and Gemini.
+- Metrics and dashboards (M5): a cookie-free event beacon, uptime checks with site status,
+  daily rollups with 30-day retention of raw data, a default dashboard, AI-designed
+  dashboards whose SQL runs in a read-only sandbox, and a status grid on the home screen.

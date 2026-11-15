@@ -735,7 +735,7 @@ async fn create_watch_edit_roll_back_and_delete_from_the_ui() {
     let home = browser.get("/").await.text().await.unwrap();
     assert!(
         home.contains("Washington Hikes")
-            && home.contains("dot live")
+            && home.contains("dot unknown")
             && home.contains("http://hikes.sites.test")
     );
     assert!(home.contains("href=\"/runs/1\"") && home.contains("succeeded"));

@@ -1,12 +1,13 @@
 // Minimal service worker: caches the app shell (styles, scripts, icons) so the installed
 // app opens instantly. Pages and API calls always go to the network: they are private
 // and must never be served stale.
-const CACHE = "sitewright-shell-v1";
+const CACHE = "sitewright-shell-v2";
 const SHELL = [
   "/static/app.css",
   "/static/app.js",
   "/static/passkey.js",
   "/static/run.js",
+  "/static/dashboard.js",
   "/static/vendor/htmx.min.js",
   "/static/icon.svg",
   "/static/icon-192.png",

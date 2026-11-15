@@ -30,6 +30,12 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/prompt", post(site_prompt))
         .route("/sites/{name}/rollback", post(site_rollback))
         .route("/sites/{name}/delete", post(site_delete))
+        .route("/sites/{name}/dashboard", get(dashboard_page))
+        .route("/sites/{name}/dashboard/data", get(dashboard_data))
+        .route(
+            "/sites/{name}/dashboard/regenerate",
+            post(dashboard_regenerate),
+        )
         .route("/runs/{id}", get(run_page))
         .route("/runs/{id}/events", get(run_events))
         .route("/runs/{id}/cancel", post(run_cancel))
@@ -182,10 +188,38 @@ struct SiteCard {
     name: String,
     title: String,
     url: String,
-    /// `live`, `draft` or `busy`: also the CSS class of the status dot.
+    /// `up`, `degraded`, `down`, `unknown`, `draft` or `busy`: also the CSS class of the
+    /// status dot.
     state: &'static str,
     state_label: &'static str,
     deployed: String,
+    /// "99.9% up" over 30 days, or empty before any check ran.
+    uptime: String,
+    /// Points of the 7-day page-view sparkline, as an SVG polyline `points` value.
+    spark: String,
+    views_7d: i64,
+}
+
+/// SVG polyline points for a small sparkline, 70 by 20 units.
+fn sparkline(values: &[i64]) -> String {
+    let max = values.iter().copied().max().unwrap_or(0).max(1) as f64;
+    let step = if values.len() > 1 {
+        70.0 / (values.len() - 1) as f64
+    } else {
+        0.0
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            format!(
+                "{:.1},{:.1}",
+                i as f64 * step,
+                19.0 - (*v as f64 / max) * 18.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 struct RunRow {
@@ -352,15 +386,27 @@ pub async fn enroll_page(State(state): State<AppState>, Path(token): Path<String
 
 async fn home(State(state): State<AppState>, Extension(session): Extension<Session>) -> Response {
     let sites = state.store.list(false).await.unwrap_or_default();
+    let health = sw_metrics::uptime::health(&state.metrics.db, state.metrics.slow_ms)
+        .await
+        .unwrap_or_default();
     let mut cards = Vec::with_capacity(sites.len());
     for site in sites {
+        let site_health = health.get(&site.id);
         let (state_class, state_label) = if state.agent.is_busy(site.name.as_str()) {
             ("busy", "Building")
-        } else if site.current_release.is_some() {
-            ("live", "Live")
-        } else {
+        } else if site.current_release.is_none() {
             ("draft", "Not published")
+        } else {
+            match site_health.map(|h| h.status) {
+                Some(sw_metrics::uptime::Status::Up) => ("up", "Up"),
+                Some(sw_metrics::uptime::Status::Degraded) => ("degraded", "Degraded"),
+                Some(sw_metrics::uptime::Status::Down) => ("down", "Down"),
+                _ => ("unknown", "Live, not checked yet"),
+            }
         };
+        let views = site_health
+            .map(|h| h.views_7d.clone())
+            .unwrap_or_else(|| vec![0; 7]);
         cards.push(SiteCard {
             url: state
                 .config
@@ -375,6 +421,12 @@ async fn home(State(state): State<AppState>, Extension(session): Extension<Sessi
             } else {
                 "never".into()
             },
+            uptime: site_health
+                .and_then(|h| h.uptime_30d)
+                .map(|pct| format!("{pct:.1}% up"))
+                .unwrap_or_default(),
+            spark: sparkline(&views),
+            views_7d: views.iter().sum(),
         });
     }
     let runs = state
@@ -551,6 +603,93 @@ async fn site_delete(
     }
     match state.store.delete(&name, Author::User).await {
         Ok(_) => hx_redirect("/"),
+        Err(e) => error_fragment(e.to_string()),
+    }
+}
+
+// ---------------------------------------------------------------------- dashboard
+
+#[derive(Template)]
+#[template(path = "dashboard.html")]
+struct DashboardPage {
+    chrome: Chrome,
+    name: String,
+    title: String,
+    has_ai: bool,
+    updated: String,
+    busy: bool,
+}
+
+async fn dashboard_page(
+    State(state): State<AppState>,
+    Extension(session): Extension<Session>,
+    Path(name): Path<String>,
+) -> Response {
+    let chrome = Chrome::for_session(&session);
+    let Ok(site) = state.store.get(&name).await else {
+        return not_found(chrome, "site");
+    };
+    let ai = sw_metrics::dashboard::load(&state.metrics.db, site.id)
+        .await
+        .ok()
+        .flatten();
+    render(DashboardPage {
+        chrome,
+        busy: state.agent.is_busy(&name),
+        name,
+        title: site.title,
+        has_ai: ai.is_some(),
+        updated: ai.map(|(_, at)| ago(at)).unwrap_or_default(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct DashboardQuery {
+    days: Option<i64>,
+}
+
+/// The data behind a site's dashboards: every panel with its rows.
+async fn dashboard_data(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<DashboardQuery>,
+) -> Response {
+    let Ok(site) = state.store.get(&name).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let days = query.days.unwrap_or(30).clamp(1, 365);
+    let sandbox = &state.metrics.sandbox;
+    let standard = sw_metrics::dashboard::render(
+        sandbox,
+        site.id,
+        &sw_metrics::dashboard::default_spec(),
+        days,
+    )
+    .await;
+    let custom = match sw_metrics::dashboard::load(&state.metrics.db, site.id)
+        .await
+        .ok()
+        .flatten()
+    {
+        Some((spec, _)) => sw_metrics::dashboard::render(sandbox, site.id, &spec, days).await,
+        None => Vec::new(),
+    };
+    axum::Json(serde_json::json!({ "days": days, "standard": standard, "custom": custom }))
+        .into_response()
+}
+
+/// Ask the agent to (re)design the site's dashboard.
+async fn dashboard_regenerate(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    let request = RunRequest {
+        site: name,
+        prompt: "Design the analytics dashboard for this site. Load the design-dashboard skill, look at what the site does, \
+                 and save a dashboard with panels specific to it. Do not change the site's files."
+            .into(),
+        new: false,
+        provider: None,
+    };
+    match state.agent.start(request).await {
+        Ok(run) => hx_redirect(&format!("/runs/{}", run.id)),
         Err(e) => error_fragment(e.to_string()),
     }
 }
@@ -828,5 +967,7 @@ mod tests {
         assert_eq!(ago(now - 3 * 86_400_000), "3 days ago");
         assert_eq!(shorten("a  b\nc", 10), "a b c");
         assert_eq!(shorten("abcdefgh", 4), "abcd…");
+        assert_eq!(sparkline(&[0, 5, 10]), "0.0,19.0 35.0,10.0 70.0,1.0");
+        assert_eq!(sparkline(&[0, 0]), "0.0,19.0 70.0,19.0");
     }
 }

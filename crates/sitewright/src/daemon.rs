@@ -8,7 +8,8 @@ use anyhow::Context;
 use sw_agent::{Agent, Skills};
 use sw_core::DataDir;
 use sw_core::config::Loaded;
-use sw_metrics::{RequestLog, VisitorHasher};
+use sw_metrics::uptime::{Target, UptimeOptions};
+use sw_metrics::{Metrics, RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
 use sw_web::AppState;
 use sw_web::auth::Auth;
@@ -61,11 +62,15 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     let hasher = Arc::new(VisitorHasher::load(db.clone()).await);
     let (request_log, log_writer) = RequestLog::spawn(db.clone());
     let domains = DomainChecker::new();
+    let metrics = Metrics::open(db.clone(), &data.db_file(), config.metrics.slow_ms)
+        .await
+        .context("cannot open the metrics sandbox")?;
     let providers = Providers::new(config.clone(), db.clone(), data.secrets_file());
     let agent = Agent::new(
         store.clone(),
         domains.clone(),
         Skills::new(Some(data.skills_dir())),
+        metrics.clone(),
         config.clone(),
         Arc::new(providers.clone()),
     )
@@ -84,6 +89,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         store: store.clone(),
         request_log,
         hasher,
+        metrics: metrics.clone(),
         agent,
         domains,
         providers,
@@ -142,6 +148,66 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         }
     }));
 
+    // Metrics housekeeping: keep today's rollups fresh, prune old raw rows hourly.
+    let token = cancel.clone();
+    let (rollup_db, retention_days) = (db.clone(), config.metrics.retention_days);
+    servers.push(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(60));
+        let mut ticks: u64 = 0;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = ticker.tick() => {
+                    if let Err(error) = sw_metrics::rollup::rollup_recent(&rollup_db).await {
+                        tracing::error!(%error, "refreshing rollups failed");
+                    }
+                    if ticks.is_multiple_of(60) {
+                        match sw_metrics::rollup::prune(&rollup_db, retention_days).await {
+                            Ok(0) => {}
+                            Ok(rows) => tracing::info!(rows, "pruned old metrics rows"),
+                            Err(error) => tracing::error!(%error, "pruning metrics failed"),
+                        }
+                    }
+                    ticks += 1;
+                }
+            }
+        }
+    }));
+
+    // Uptime checks: fetch every published site's front page on a timer.
+    if config.metrics.uptime_interval_secs > 0 {
+        let resolve_to = config.metrics.uptime_resolve_local.then(|| loopback(addr));
+        let (routes_store, domains_config) = (store.clone(), config.domains.clone());
+        let targets: sw_metrics::uptime::Targets = Arc::new(move || {
+            routes_store
+                .routes()
+                .sites()
+                .into_iter()
+                .map(|route| Target {
+                    site_id: route.site_id,
+                    url: match resolve_to {
+                        Some(local) => {
+                            format!("http://{}:{}/", route.primary_hostname, local.port())
+                        }
+                        None => format!("{}/", domains_config.public_url(&route.primary_hostname)),
+                    },
+                    hostname: route.primary_hostname.clone(),
+                })
+                .collect()
+        });
+        let options = UptimeOptions {
+            interval: Duration::from_secs(config.metrics.uptime_interval_secs),
+            slow_ms: config.metrics.slow_ms,
+            resolve_to,
+        };
+        servers.push(sw_metrics::uptime::spawn(
+            db.clone(),
+            targets,
+            options,
+            cancel.clone(),
+        ));
+    }
+
     tracing::info!(%addr, admin_host = %state.admin_host, sites = state.store.routes().len(), "listening");
     Ok(Daemon {
         addr,
@@ -153,14 +219,19 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     })
 }
 
-/// After each publish, fetch the site's front page through the daemon's own listener,
-/// exactly as a proxy would. A release that cannot be served is rolled back.
-fn install_health_check(store: &SiteStore, addr: SocketAddr) {
-    let target = if addr.ip().is_unspecified() {
+/// The address to reach our own listener at.
+fn loopback(addr: SocketAddr) -> SocketAddr {
+    if addr.ip().is_unspecified() {
         SocketAddr::from((Ipv4Addr::LOCALHOST, addr.port()))
     } else {
         addr
-    };
+    }
+}
+
+/// After each publish, fetch the site's front page through the daemon's own listener,
+/// exactly as a proxy would. A release that cannot be served is rolled back.
+fn install_health_check(store: &SiteStore, addr: SocketAddr) {
+    let target = loopback(addr);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .no_proxy()

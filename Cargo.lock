@@ -3594,6 +3594,7 @@ dependencies = [
  "sqlx",
  "sw-core",
  "sw-llm",
+ "sw-metrics",
  "sw-sites",
  "tempfile",
  "thiserror 2.0.21",
@@ -3640,15 +3641,22 @@ dependencies = [
 name = "sw-metrics"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hex",
+ "libsqlite3-sys",
  "rand",
+ "reqwest",
  "serde",
+ "serde_json",
  "sha2 0.11.1",
  "sqlx",
  "sw-core",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "tracing",
+ "x509-parser",
 ]
 
 [[package]]

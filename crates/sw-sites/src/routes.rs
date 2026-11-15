@@ -13,6 +13,8 @@ pub struct Route {
     pub site: SiteName,
     pub release_id: i64,
     pub sha: String,
+    /// The site's primary hostname (the same for all of the site's routes).
+    pub primary_hostname: String,
     /// The immutable release directory files are served from.
     pub root: PathBuf,
 }
@@ -39,6 +41,19 @@ impl RouteTable {
 
     pub fn is_empty(&self) -> bool {
         self.by_host.is_empty()
+    }
+
+    /// One route per site, whichever hostname it was reached by.
+    pub fn sites(&self) -> Vec<Arc<Route>> {
+        let mut seen = std::collections::HashSet::new();
+        let mut sites: Vec<Arc<Route>> = self
+            .by_host
+            .values()
+            .filter(|r| seen.insert(r.site_id))
+            .cloned()
+            .collect();
+        sites.sort_by_key(|r| r.site_id);
+        sites
     }
 
     pub fn hostnames(&self) -> impl Iterator<Item = &str> {

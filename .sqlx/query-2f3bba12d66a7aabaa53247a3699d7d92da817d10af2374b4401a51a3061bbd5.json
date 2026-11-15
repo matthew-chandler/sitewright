@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT spec, updated_at FROM dashboards WHERE site_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "spec",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "dashboards",
+            "name": "spec"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "dashboards",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2f3bba12d66a7aabaa53247a3699d7d92da817d10af2374b4401a51a3061bbd5"
+}

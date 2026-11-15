@@ -14,6 +14,7 @@ Go through this after writing the files and before `publish_site`.
 - [ ] `<!doctype html>` and `<html lang>`.
 - [ ] `<meta charset>`, viewport meta, a unique `<title>`, a `<meta name="description">`.
 - [ ] One stylesheet link, with the right relative path from pages in subfolders.
+- [ ] The analytics line `<script src="/_sw/a.js" defer></script>` on every page.
 
 ## Content
 

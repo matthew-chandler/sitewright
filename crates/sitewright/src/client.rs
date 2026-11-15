@@ -70,7 +70,7 @@ impl AdminClient {
     fn unreachable(&self, e: reqwest::Error) -> anyhow::Error {
         if e.is_connect() {
             anyhow::anyhow!(
-                "cannot reach the daemon at {}; is `sitewright serve` running, and do you have access to its data directory?",
+                "cannot reach the daemon at {}. Is `sitewright serve` running, and are you the user it runs as? If its data directory is elsewhere, pass --data-dir <dir> or set SITEWRIGHT_DATA_DIR.",
                 self.socket.display()
             )
         } else {

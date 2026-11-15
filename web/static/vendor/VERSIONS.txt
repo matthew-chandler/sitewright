@@ -1,0 +1,8 @@
+Vendored front-end libraries (no CDN at runtime). Regenerate the Vega files with
+scripts/vendor-vega.sh.
+
+htmx.org 2.0.4              htmx.min.js
+vega 6.4.0                  vega.min.js
+vega-lite 6.5.0             vega-lite.min.js
+vega-embed 7.3.0            vega-embed.min.js
+vega-interpreter 2.3.2      vega-interpreter.min.js (repackaged, see the script)

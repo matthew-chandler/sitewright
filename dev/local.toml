@@ -10,3 +10,7 @@ listen = "127.0.0.1:8080"
 zones = ["localhost"]
 public_scheme = "http"
 public_port = 8080
+
+[metrics]
+# *.localhost does not resolve for the daemon itself: check sites through its own listener.
+uptime_resolve_local = true

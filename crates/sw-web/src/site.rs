@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use sw_core::names::normalize_hostname;
 use sw_core::time::now_ms;
-use sw_metrics::{RequestRecord, classify_user_agent};
+use sw_metrics::{RequestRecord, beacon, classify_user_agent};
 use sw_sites::Route;
 use tower::ServiceExt;
 use tower_http::services::{ServeDir, ServeFile};
@@ -29,6 +29,14 @@ pub async fn serve(
     let started = Instant::now();
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
+    // The analytics beacon is served by the daemon on every site, and is not itself
+    // counted as traffic.
+    if path == beacon::SCRIPT_PATH {
+        return beacon_script(&method);
+    }
+    if path == beacon::EVENT_PATH {
+        return beacon_event(state, &route, peer, request).await;
+    }
     let user_agent = header_str(request.headers(), "user-agent")
         .unwrap_or("")
         .to_owned();
@@ -63,6 +71,59 @@ pub async fn serve(
         visitor_hash: state.hasher.hash(ip, &user_agent, route.site_id),
     });
     response
+}
+
+fn beacon_script(method: &Method) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+            (
+                header::HeaderName::from_static("x-content-type-options"),
+                "nosniff",
+            ),
+        ],
+        beacon::SCRIPT,
+    )
+        .into_response()
+}
+
+/// Accept one analytics event. Always answers quickly and says little: this endpoint is
+/// open to the internet.
+async fn beacon_event(
+    state: &AppState,
+    route: &Route,
+    peer: SocketAddr,
+    request: Request,
+) -> Response {
+    if request.method() != Method::POST {
+        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+    }
+    let user_agent = header_str(request.headers(), "user-agent")
+        .unwrap_or("")
+        .to_owned();
+    let ip = client_ip(&state.config.server, peer, request.headers());
+    let Ok(body) = axum::body::to_bytes(request.into_body(), beacon::MAX_BODY_BYTES).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let Ok(event) = beacon::parse_event(&body) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    // Bots do not run the script; anything claiming to be one here is noise.
+    if classify_user_agent(&user_agent) == sw_metrics::UaClass::Bot {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let visitor = state.hasher.hash(ip, &user_agent, route.site_id);
+    if !state.metrics.beacon_limiter.allow(&visitor) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+    if let Err(error) = beacon::record(&state.metrics.db, route.site_id, &visitor, &event).await {
+        tracing::error!(%error, "could not store a beacon event");
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Resolve the request path inside `root`: the file itself, a directory's `index.html`,
