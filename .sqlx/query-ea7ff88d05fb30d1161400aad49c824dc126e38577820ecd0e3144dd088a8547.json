@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) as \"n!: i64\" FROM passkeys",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ea7ff88d05fb30d1161400aad49c824dc126e38577820ecd0e3144dd088a8547"
+}

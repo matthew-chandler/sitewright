@@ -10,6 +10,14 @@ ignore = [
   # ever written by the daemon itself, so there is no less-trusted writer. No sqlx release
   # accepts the fixed libsqlite3-sys (>= 0.39) yet; remove this entry when one does.
   { id = "RUSTSEC-2026-0459", reason = "local-only; database files are written only by the daemon; no fixed sqlx release yet" },
+  # Marvin attack on the `rsa` crate: a timing side channel in RSA *private-key*
+  # operations. `rsa` is here only through webauthn-rs, which uses it to *verify* RS256
+  # passkey signatures with public keys. Sitewright never holds an RSA private key, so
+  # there is nothing to recover. No fixed `rsa` release exists.
+  { id = "RUSTSEC-2023-0071", reason = "rsa is used only for public-key signature verification (webauthn-rs); no RSA private keys exist" },
+  # basic-toml is unmaintained. It is a build-time dependency of askama's derive macro
+  # (it parses askama.toml during compilation) and is not part of the shipped binary.
+  { id = "RUSTSEC-2026-0374", reason = "build-time only (askama_derive reads askama.toml); not in the binary" },
 ]
 
 [licenses]

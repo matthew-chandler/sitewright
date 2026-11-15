@@ -78,7 +78,11 @@ pub struct DomainsConfig {
     pub zones: Vec<String>,
     /// Hostname of the admin UI. Default: `admin.<zones[0]>` (`localhost` for local dev).
     pub admin_host: Option<String>,
-    /// Scheme visitors use to reach sites and the admin UI: `http` or `https`.
+    /// Full origin of the admin UI, for example `https://admin.example.com`. Needed when
+    /// it differs from `public_scheme` + `admin_host` (+ `public_port`). Passkeys are
+    /// bound to this origin.
+    pub admin_url: Option<String>,
+    /// Scheme visitors use to reach sites: `http` or `https`.
     pub public_scheme: Scheme,
     /// Public port, when it is not the scheme's default (for example 8080 in local dev).
     pub public_port: Option<u16>,
@@ -89,6 +93,7 @@ impl Default for DomainsConfig {
         Self {
             zones: vec!["localhost".to_owned()],
             admin_host: None,
+            admin_url: None,
             public_scheme: Scheme::Http,
             public_port: None,
         }
@@ -124,6 +129,14 @@ impl DomainsConfig {
             Some(host) => host.clone(),
             None if self.default_zone() == "localhost" => "localhost".to_owned(),
             None => format!("admin.{}", self.default_zone()),
+        }
+    }
+
+    /// The admin UI's origin, without a trailing slash.
+    pub fn admin_origin(&self) -> String {
+        match &self.admin_url {
+            Some(url) => url.trim_end_matches('/').to_owned(),
+            None => self.public_url(&self.admin_host()),
         }
     }
 
@@ -464,6 +477,19 @@ impl Config {
                 "agent.max_turns and agent.max_concurrent_runs must be at least 1".into(),
             ));
         }
+        if let Some(url) = &self.domains.admin_url {
+            let host = url
+                .strip_prefix("https://")
+                .or_else(|| url.strip_prefix("http://"))
+                .map(|rest| rest.trim_end_matches('/'))
+                .and_then(normalize_hostname);
+            if host.as_deref() != Some(self.domains.admin_host().as_str()) {
+                return Err(Error::Config(format!(
+                    "domains.admin_url: {url:?} must be http(s)://{} with an optional port",
+                    self.domains.admin_host()
+                )));
+            }
+        }
         if self.sites.keep_releases == 0 {
             return Err(Error::Config(
                 "sites.keep_releases must be at least 1".into(),
@@ -579,6 +605,29 @@ mod tests {
         assert!(
             Config::from_toml(
                 "[[llm.providers]]\nid = \"a\"\nkind = \"openai_compat\"\nmodel = \"m\""
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn admin_origin_defaults_to_the_public_url_of_the_admin_host() {
+        let config = Config::from_toml("[domains]\npublic_port = 8080").unwrap();
+        assert_eq!(config.domains.admin_origin(), "http://localhost:8080");
+        let config = Config::from_toml(
+            "[domains]\nzones = [\"dev.example.com\"]\nadmin_host = \"sw.example.com\"\nadmin_url = \"https://sw.example.com/\"",
+        )
+        .unwrap();
+        assert_eq!(config.domains.admin_origin(), "https://sw.example.com");
+        assert!(
+            Config::from_toml(
+                "[domains]\nzones = [\"example.com\"]\nadmin_url = \"https://other.example.com\""
+            )
+            .is_err()
+        );
+        assert!(
+            Config::from_toml(
+                "[domains]\nzones = [\"example.com\"]\nadmin_url = \"ftp://admin.example.com\""
             )
             .is_err()
         );

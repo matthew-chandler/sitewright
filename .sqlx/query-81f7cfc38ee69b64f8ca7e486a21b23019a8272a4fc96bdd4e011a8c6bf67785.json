@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE passkeys SET data = ?1, last_used_at = ?2 WHERE id = ?3 RETURNING user_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "passkeys",
+            "name": "user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "81f7cfc38ee69b64f8ca7e486a21b23019a8272a4fc96bdd4e011a8c6bf67785"
+}

@@ -11,7 +11,7 @@ grows with each milestone; [PLAN.md](../PLAN.md) describes the full v1 design.
 | `sitewright` | The binary: CLI, daemon start-up and shutdown, admin-socket client. |
 | `sw-core` | Configuration, data-directory layout, validated names, database pool and migrations. |
 | `sw-sites` | The site store: path confinement, git history, immutable releases, routing table. |
-| `sw-web` | HTTP: host-based dispatch, static serving, the JSON API, the admin socket. |
+| `sw-web` | HTTP: host-based dispatch, static serving, the JSON API, the admin socket, and the admin UI with its authentication. |
 | `sw-metrics` | Request log and privacy-preserving visitor hashing. |
 | `sw-llm` | The `LlmProvider` trait, SSE parsing, retries and the provider adapters. |
 | `sw-agent` | The agent loop, its tools, the system prompt and run persistence. |
@@ -104,6 +104,23 @@ to the agent exactly as they do to the CLI. Tool failures are returned to the mo
 results, not raised, so it can correct itself; only provider failures end a run. Deleting
 a site is never done by a tool: `delete_site` emits a confirmation request that a person
 answers by typing the site's name.
+
+## The admin UI
+
+Server-rendered pages (`web/templates`, compiled into the binary by askama) with htmx for
+form posts and a little hand-written JavaScript for passkeys and the live run view. All
+assets are embedded (`web/static`); there is no build step and no CDN.
+
+Every request to the admin hostname passes one guard (`sw_web::admin::guard`):
+
+1. A state-changing request whose `Origin` is not the admin origin is refused.
+2. With a session cookie: state-changing requests must carry the session's CSRF token.
+3. Without one: public paths (sign-in, enrollment, static files) pass; `/api/*` accepts an
+   API token; everything else redirects to the sign-in page or answers 401.
+
+Authentication is passkeys only. `sitewright admin invite` creates a one-time enrollment
+link over the admin socket; the same command is the recovery path. See
+[security.md](security.md).
 
 ## The file sandbox
 

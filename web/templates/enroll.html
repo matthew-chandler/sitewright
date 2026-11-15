@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Enroll a passkey · Sitewright{% endblock %}
+{% block content %}
+<section class="center">
+  <img src="/static/icon.svg" alt="" width="72" height="72">
+  <h1>Enroll a passkey</h1>
+  {% if valid %}
+  <p>This creates a passkey on this device and signs you in. There is no password.</p>
+  <form id="passkey-enroll" data-invite="{{ token }}">
+    <label for="passkey-name">Name for this passkey</label>
+    <input id="passkey-name" name="name" maxlength="60" placeholder="My phone" autocomplete="off">
+    <button class="primary big" type="submit">Create passkey</button>
+  </form>
+  {% else %}
+  <p>This enrollment link has expired or was already used. Links are valid for 15 minutes and work once.</p>
+  <p>On the server, run <code>sitewright admin invite</code> for a new one.</p>
+  {% endif %}
+  <div class="status" id="passkey-status" aria-live="polite"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/passkey.js"></script>{% endblock %}

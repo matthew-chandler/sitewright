@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!\" FROM invites WHERE token_hash = ?1 AND used_at IS NULL AND expires_at > ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "invites",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "44eb12a0c9fb45004c90e19e570e4abb8abb2647ee0a6242ce38c7966db0ef32"
+}

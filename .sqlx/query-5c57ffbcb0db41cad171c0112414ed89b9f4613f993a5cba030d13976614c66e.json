@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO passkeys (user_id, credential_id, name, data, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "5c57ffbcb0db41cad171c0112414ed89b9f4613f993a5cba030d13976614c66e"
+}

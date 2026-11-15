@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Sitewright{% endblock %}
+{% block content %}
+<section class="center">
+  <img src="/static/icon.svg" alt="" width="72" height="72">
+  <h1>Sitewright</h1>
+  {% if has_passkeys %}
+  <button class="primary big" id="passkey-login" type="button">Sign in with a passkey</button>
+  {% else %}
+  <p>No passkey is enrolled yet. On the server, run:</p>
+  <pre><code>sitewright admin invite</code></pre>
+  <p>and open the link it prints on this device.</p>
+  {% endif %}
+  <div class="status" id="passkey-status" aria-live="polite"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/passkey.js"></script>{% endblock %}

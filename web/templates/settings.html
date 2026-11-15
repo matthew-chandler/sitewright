@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Settings · Sitewright{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<section>
+  <h2>Models</h2>
+  {% if providers.is_empty() %}
+  <p class="empty">No provider yet. Add one below to start building sites.</p>
+  {% else %}
+  <ul class="list">
+    {% for p in providers %}
+    <li>
+      <div>
+        <strong>{{ p.id }}</strong>
+        {% if p.is_default %}<span class="badge succeeded">default</span>{% endif %}
+        {% if p.from_file %}<span class="badge">config.toml</span>{% endif %}
+        <br>
+        <span class="muted">{{ p.kind }} · {{ p.model }}{% if !p.base_url.is_empty() %} · {{ p.base_url }}{% endif %} ·
+          {% if p.has_key %}key saved{% else %}no key{% endif %}</span>
+        <div class="status" id="provider-status-{{ p.id }}" aria-live="polite"></div>
+      </div>
+      <div class="row">
+        <button type="button" hx-post="/settings/providers/{{ p.id }}/test" hx-target="#provider-status-{{ p.id }}"
+                hx-disabled-elt="this" hx-indicator="this">Test</button>
+        {% if !p.from_file %}
+        <button type="button" class="danger" hx-post="/settings/providers/{{ p.id }}/delete" hx-target="#provider-status-{{ p.id }}"
+                hx-confirm="Remove {{ p.id }} and its saved key?">Remove</button>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <details>
+    <summary>Add or update a provider</summary>
+    <form hx-post="/settings/providers" hx-target="find .status" hx-disabled-elt="find button[type=submit]">
+      <label for="p-id">Id</label>
+      <input id="p-id" name="id" required maxlength="40" pattern="[a-z0-9_-]+" autocapitalize="none" spellcheck="false" placeholder="openai">
+      <label for="p-kind">Kind</label>
+      <select id="p-kind" name="kind">
+        <option value="openai_compat">OpenAI-compatible (OpenAI, Azure, OpenRouter, Groq, Ollama)</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="gemini">Gemini</option>
+      </select>
+      <label for="p-base">Base URL</label>
+      <input id="p-base" name="base_url" type="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="https://api.openai.com/v1">
+      <p class="hint">Required for OpenAI-compatible providers. Azure: <code>https://RESOURCE.openai.azure.com/openai/v1/</code></p>
+      <label for="p-model">Model</label>
+      <input id="p-model" name="model" required autocapitalize="none" spellcheck="false" placeholder="Model or deployment name">
+      <label for="p-auth">Key header</label>
+      <select id="p-auth" name="auth">
+        <option value="bearer">Authorization: Bearer (most providers)</option>
+        <option value="api_key_header">api-key (Azure OpenAI)</option>
+      </select>
+      <label for="p-key">API key</label>
+      <input id="p-key" name="api_key" type="password" autocomplete="off" placeholder="Stored on the server; never shown again">
+      <button class="primary" type="submit">Save provider</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+  </details>
+</section>
+
+<section>
+  <h2>Budgets</h2>
+  <dl class="facts">
+    <dt>Spent today</dt><dd>${{ spent_today }} of ${{ daily_cap }}</dd>
+    <dt>Model calls per run</dt><dd>{{ max_turns }}</dd>
+    <dt>Tokens per run</dt><dd>{{ max_run_tokens }}</dd>
+  </dl>
+  <p class="hint">Change these under <code>[agent]</code> in <code>config.toml</code>. Cost needs a price for the model under <code>[[llm.prices]]</code>.</p>
+</section>
+
+<section>
+  <h2>Domains</h2>
+  <dl class="facts">
+    <dt>Zones</dt><dd>{% for z in zones %}<code>*.{{ z }}</code> {% endfor %}</dd>
+    <dt>Admin</dt><dd>{{ admin_origin }}</dd>
+    <dt>Mode</dt><dd>{{ mode }}</dd>
+  </dl>
+  <form hx-post="/settings/dns-check" hx-target="find .status" hx-disabled-elt="find button">
+    <label for="dns-host">Check that a hostname reaches this server</label>
+    <div class="inline">
+      <input id="dns-host" name="hostname" required autocapitalize="none" spellcheck="false" placeholder="hikes.{% if let Some(z) = zones.first() %}{{ z }}{% endif %}">
+      <button type="submit">Check</button>
+    </div>
+    <div class="status" aria-live="polite"></div>
+  </form>
+</section>
+
+<section>
+  <h2>Passkeys</h2>
+  <ul class="list">
+    {% for k in passkeys %}
+    <li>
+      <div><strong>{{ k.name }}</strong><br><span class="muted">added {{ k.created }} · last used {{ k.last_used }}</span>
+        <div class="status" id="passkey-status-{{ k.id }}"></div></div>
+      {% if can_remove_passkey %}
+      <button type="button" class="danger" hx-post="/settings/passkeys/{{ k.id }}/delete" hx-target="#passkey-status-{{ k.id }}"
+              hx-confirm="Remove the passkey {{ k.name }}?">Remove</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <form id="passkey-add">
+    <label for="passkey-name">Add a passkey for another device</label>
+    <div class="inline">
+      <input id="passkey-name" name="name" maxlength="60" placeholder="Laptop" autocomplete="off">
+      <button type="submit">Add passkey</button>
+    </div>
+  </form>
+  <div class="status" id="passkey-status" aria-live="polite"></div>
+  <p class="hint">Lost every passkey? Run <code>sitewright admin invite</code> on the server.</p>
+</section>
+
+<section>
+  <h2>API tokens</h2>
+  {% if !tokens.is_empty() %}
+  <ul class="list">
+    {% for t in tokens %}
+    <li>
+      <div><strong>{{ t.name }}</strong><br><span class="muted"><code>{{ t.prefix }}…</code> · created {{ t.created }} · last used {{ t.last_used }}</span>
+        <div class="status" id="token-status-{{ t.id }}"></div></div>
+      <button type="button" class="danger" hx-post="/settings/tokens/{{ t.id }}/delete" hx-target="#token-status-{{ t.id }}"
+              hx-confirm="Revoke the token {{ t.name }}?">Revoke</button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form hx-post="/settings/tokens" hx-target="find .status" hx-disabled-elt="find button">
+    <label for="token-name">Create a token for scripts</label>
+    <div class="inline">
+      <input id="token-name" name="name" required maxlength="60" placeholder="deploy script">
+      <button type="submit">Create token</button>
+    </div>
+    <div class="status" aria-live="polite"></div>
+  </form>
+  <p class="hint">Use it as <code>Authorization: Bearer &lt;token&gt;</code> on <code>{{ admin_origin }}/api/v1/…</code></p>
+</section>
+
+<section>
+  <h2>About</h2>
+  <p class="muted">Sitewright {{ version }}</p>
+  <button type="button" hx-post="/logout">Sign out</button>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/passkey.js"></script>{% endblock %}

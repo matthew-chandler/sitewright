@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M2 done; M3 next)_
+_Last updated: 2026-11-15 (M3 built and deployed; M4 next)_
 
 ## Needs from Matthew
 
@@ -20,7 +20,12 @@ _Last updated: 2026-11-15 (M2 done; M3 next)_
    later re-run reuses the certificate.) This blocks only the M3 phone test: passkeys need
    HTTPS.
 
-2. **Create `.claude/settings.json` (optional, convenience).** Claude Code's permission
+2. **Run the phone checklist** in [testing.md](testing.md#manual-checklist-phone-flows)
+   once #1 is done. On the VPS as devtest:
+   `~/bin/sitewright --data-dir ~/sitewright-data admin invite` prints the enrollment link
+   to open on your phone. Tell me what fails, if anything.
+
+3. **Create `.claude/settings.json` (optional, convenience).** Claude Code's permission
    classifier refused to let the agent write its own allow-list, which is reasonable. The
    exact file contents are in [development.md](development.md#claude-code-permissions).
 
@@ -34,7 +39,7 @@ to DNS only.
 | M0 Scaffold | done |
 | M1 Serve sites (proxy mode) | done |
 | M2 Agent with tools, one provider | done |
-| M3 Web UI and passkeys | not started |
+| M3 Web UI and passkeys | done, pending the phone checklist (Needs #1, #2) |
 | M4 Skills and more providers | not started |
 | M5 Metrics and dashboards | not started |
 | M6 Standalone TLS, updates, export, v1.0.0 | not started |
@@ -70,13 +75,23 @@ to DNS only.
   `http://hikes.dev.machandler.com` in about a minute for $0.02, and a follow-up prompt
   edited it.
 
+- **M3:** the admin web UI (askama templates, htmx, about 300 lines of hand-written
+  JavaScript, no build step): sign-in, enrollment, home grid, new site, site page (prompt,
+  runs, releases with change summaries and rollback, delete with typed confirmation), live
+  run view over SSE with cancel, settings (providers with Test connection, budgets, DNS
+  check, passkeys, API tokens). Passkeys with `webauthn-rs`, `__Host-` session cookie,
+  CSRF tokens plus an Origin check, rate-limited auth endpoints, API tokens for
+  `/api/v1`, `sitewright admin invite`, PWA manifest, icons and a shell-only service
+  worker. Providers can be added in the UI (keys go to `secrets.toml`). 96 tests,
+  including the whole passkey flow with a software authenticator. Deployed to the VPS.
+
 ## In progress
 
-- M3: web UI (askama + htmx), passkeys, sessions and CSRF, PWA, SSE run view.
+- M4: skills loader and the six built-in skills, `anthropic` and `gemini` adapters.
 
 ## Next
 
-- M4: skills loader and built-in skills, `anthropic` and `gemini` adapters.
+- M5: metrics beacon, uptime checks, rollups, default and AI dashboards.
 
 ## Decisions worth knowing (beyond the ADRs)
 
@@ -92,6 +107,10 @@ to DNS only.
   write. `create_site` only works in a run started with `--new`, for that name.
 - `scripts/dev-secrets.sh local|vps` turns `.env` into `secrets.toml` and an `[llm]`
   config section without printing anything. The VPS has both.
+- The run view uses a plain `EventSource` and renders JSON events in `run.js`, rather
+  than the htmx SSE extension mentioned in ADR-0003: the events are data, not HTML.
+- `deny.toml` also ignores RUSTSEC-2023-0071 (`rsa`, used by webauthn-rs only to verify
+  signatures) and RUSTSEC-2026-0374 (`basic-toml`, build-time only), each with a reason.
 - Rollback without a target goes to the release published before the current one, and
   resets the working tree to match.
 
@@ -103,8 +122,12 @@ to DNS only.
 
 ## What to test by hand
 
+- The phone checklist in [testing.md](testing.md) (after Needs #1).
+- Until then, the UI can be tried on a desktop over an SSH tunnel:
+  `ssh -L 18080:127.0.0.1:18080 racknerd-dev` shows the pages, but passkeys will not work
+  there because the origin differs from the configured admin URL. Locally:
+  `scripts/dev-secrets.sh local`, `cargo run -- serve --data-dir dev/data`,
+  `cargo run -- --data-dir dev/data admin invite`, then open the printed
+  `http://localhost:8080/enroll/...` link (browsers allow passkeys on localhost).
 - `http://hikes.dev.machandler.com`: the agent-built site.
-- On the VPS as devtest:
-  `~/bin/sitewright --data-dir ~/sitewright-data prompt hikes "make the header dark blue"`,
-  then reload the page; `... site rollback hikes` undoes it.
-- `./scripts/smoke-dev.sh` from WSL (the admin-over-HTTPS check fails until Needs #1).
+- `./scripts/smoke-dev.sh` from WSL.

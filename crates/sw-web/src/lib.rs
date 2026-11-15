@@ -5,12 +5,15 @@
 
 pub mod admin;
 pub mod api;
+pub mod auth;
 pub mod client_ip;
 pub mod dispatch;
 pub mod error;
+pub mod providers;
 pub mod site;
 pub mod socket;
 pub mod state;
+pub mod ui;
 
 pub use dispatch::public_router;
 pub use state::AppState;

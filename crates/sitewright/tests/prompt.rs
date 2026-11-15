@@ -5,75 +5,10 @@
 
 mod common;
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-use common::{boot_with, host};
+use common::{PAGE, boot_with, host, llm_config, mock_model, text_turn, tool_turn, write_secrets};
 use serde_json::{Value, json};
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
-
-const PAGE: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Hikes</title></head>\
-    <body><h1>Washington trails</h1></body></html>";
-
-fn sse(chunks: Vec<Value>) -> ResponseTemplate {
-    let mut body: String = chunks.iter().map(|c| format!("data: {c}\n\n")).collect();
-    body.push_str("data: [DONE]\n\n");
-    ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
-}
-
-fn tool_turn(name: &str, arguments: Value) -> ResponseTemplate {
-    sse(vec![
-        json!({"choices": [{"index": 0, "finish_reason": null, "delta": {"tool_calls": [
-            {"index": 0, "id": format!("call_{name}"), "type": "function", "function": {"name": name, "arguments": arguments.to_string()}}
-        ]}}]}),
-        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
-        json!({"choices": [], "usage": {"prompt_tokens": 1000, "completion_tokens": 100}}),
-    ])
-}
-
-fn text_turn(text: &str) -> ResponseTemplate {
-    sse(vec![
-        json!({"choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
-        json!({"choices": [], "usage": {"prompt_tokens": 1000, "completion_tokens": 100}}),
-    ])
-}
-
-/// A mock model that answers each successive call with the next scripted turn.
-async fn mock_model(turns: Vec<ResponseTemplate>) -> MockServer {
-    let server = MockServer::start().await;
-    let next = Arc::new(AtomicUsize::new(0));
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(header("api-key", "test-key"))
-        .respond_with(move |_: &Request| {
-            let i = next.fetch_add(1, Ordering::SeqCst);
-            turns
-                .get(i)
-                .cloned()
-                .unwrap_or_else(|| text_turn("(script exhausted)"))
-        })
-        .mount(&server)
-        .await;
-    server
-}
-
-fn llm_config(server: &MockServer) -> String {
-    format!(
-        "[llm]\ndefault = \"mock\"\n[[llm.providers]]\nid = \"mock\"\nkind = \"openai_compat\"\nbase_url = \"{}/v1\"\n\
-         model = \"mock-mini\"\nauth = \"api_key_header\"\nkey_ref = \"mock\"\nmax_retries = 0\n\
-         [[llm.prices]]\nmodel = \"mock-mini\"\ninput_per_mtok = 0.25\noutput_per_mtok = 2.0\n",
-        server.uri()
-    )
-}
-
-fn write_secrets(t: &common::TestDaemon) {
-    let mut secrets = sw_core::Secrets::default();
-    secrets.keys.insert("mock".into(), "test-key".into());
-    secrets.save(&t.daemon.data.secrets_file()).unwrap();
-}
+use wiremock::matchers::method;
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn prompt_new_builds_a_site_and_a_follow_up_edits_it() {

@@ -10,6 +10,8 @@ trusted_proxies = ["127.0.0.1/32"]
 [domains]
 zones = ["dev.machandler.com"]
 admin_host = "sitewright-dev.machandler.com"
+# The admin UI is reached over HTTPS through Cloudflare; passkeys are bound to this origin.
+admin_url = "https://sitewright-dev.machandler.com"
 # Sites under *.dev are plain HTTP: Cloudflare's free certificate does not cover
 # second-level subdomains.
 public_scheme = "http"

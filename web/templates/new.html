@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}New site · Sitewright{% endblock %}
+{% block content %}
+<h1>New site</h1>
+{% if providers.is_empty() %}
+<p class="msg error">No LLM provider is configured yet. <a href="/settings">Add one in Settings</a> first.</p>
+{% endif %}
+<form hx-post="/new" hx-target="find .status" hx-disabled-elt="find button">
+  <label for="prompt">What should the site be?</label>
+  <textarea id="prompt" name="prompt" rows="6" required maxlength="20000"
+            placeholder="A hiking log with my favorite Washington trails"></textarea>
+
+  <label for="name">Name</label>
+  <div class="inline">
+    <input id="name" name="name" required maxlength="63" pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+           autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="hikes">
+    <span class="muted">.{{ zone }}</span>
+  </div>
+  <p class="hint">Lowercase letters, digits and hyphens. This becomes the address.</p>
+
+  {% if providers.len() > 1 %}
+  <label for="provider">Model</label>
+  <select id="provider" name="provider">
+    {% for p in providers %}
+    <option value="{{ p.id }}" {% if p.selected %}selected{% endif %}>{{ p.label }}</option>
+    {% endfor %}
+  </select>
+  {% endif %}
+
+  <button class="primary big" type="submit">Create site</button>
+  <div class="status" aria-live="polite"></div>
+</form>
+{% endblock %}
