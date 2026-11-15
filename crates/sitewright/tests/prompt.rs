@@ -116,7 +116,7 @@ async fn prompt_new_builds_a_site_and_a_follow_up_edits_it() {
             .unwrap()
             .contains("Sitewright's site builder")
     );
-    assert_eq!(sent["tools"].as_array().unwrap().len(), 12);
+    assert_eq!(sent["tools"].as_array().unwrap().len(), 14);
     t.daemon.shutdown().await;
 }
 

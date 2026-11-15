@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::events::{RunEvent, shorten, shorten_value};
 use crate::prompt::{ExistingSite, SiteContext, system_prompt};
+use crate::skills::Skills;
 use crate::tools::{self, Effect, ToolContext};
 
 /// Longest accepted prompt, in characters.
@@ -134,6 +135,7 @@ struct Inner {
     db: SqlitePool,
     store: SiteStore,
     domains: DomainChecker,
+    skills: Skills,
     config: Arc<Config>,
     providers: Arc<dyn ProviderSource>,
     active: Mutex<HashMap<i64, Active>>,
@@ -162,6 +164,7 @@ impl Agent {
     pub async fn new(
         store: SiteStore,
         domains: DomainChecker,
+        skills: Skills,
         config: Arc<Config>,
         providers: Arc<dyn ProviderSource>,
     ) -> Result<Self, AgentError> {
@@ -180,6 +183,7 @@ impl Agent {
                 db,
                 store,
                 domains,
+                skills,
                 config,
                 providers,
                 active: Mutex::new(HashMap::new()),
@@ -471,6 +475,7 @@ impl Job {
         let mut ctx = ToolContext {
             store: self.inner.store.clone(),
             domains: self.inner.domains.clone(),
+            skills: self.inner.skills.clone(),
             site: self.site.clone(),
             may_create: self.may_create,
             http_port: self
@@ -548,6 +553,7 @@ impl Job {
             let mut calls: Vec<ToolCall> = Vec::new();
             let mut turn_usage = Usage::default();
             let mut stop = None;
+            let mut raw = None;
             loop {
                 let event = tokio::select! {
                     _ = self.cancel.cancelled() => return (RunStatus::Cancelled, "cancelled".into()),
@@ -560,6 +566,7 @@ impl Job {
                     }
                     Some(Ok(Event::ToolCall(call))) => calls.push(call),
                     Some(Ok(Event::Usage(usage))) => turn_usage = usage,
+                    Some(Ok(Event::Raw(value))) => raw = Some(value),
                     Some(Ok(Event::Stop(reason))) => stop = Some(reason),
                     Some(Err(e)) => {
                         self.record_usage(turn_usage).await;
@@ -599,6 +606,7 @@ impl Job {
             messages.push(Message::Assistant {
                 text,
                 tool_calls: calls.clone(),
+                raw,
             });
             for call in calls {
                 self.emit(RunEvent::ToolCall {
@@ -648,15 +656,18 @@ impl Job {
             .domains()
             .public_url(&store.domains().site_hostname(&name));
         if self.may_create {
+            let skills = self.inner.skills.index();
             return Ok(SiteContext {
                 name: self.site.clone(),
                 url,
                 existing: None,
+                skills,
             });
         }
         let info = store.info(&self.site).await?;
         let files = store.list_files(&self.site).await?;
         Ok(SiteContext {
+            skills: self.inner.skills.index(),
             name: self.site.clone(),
             url: info.url,
             existing: Some(ExistingSite {

@@ -78,7 +78,7 @@ impl OpenAiCompat {
         for message in &request.messages {
             messages.push(match message {
                 Message::User { content } => json!({ "role": "user", "content": content }),
-                Message::Assistant { text, tool_calls } => {
+                Message::Assistant { text, tool_calls, .. } => {
                     let mut m = Map::new();
                     m.insert("role".into(), json!("assistant"));
                     // Content must be null, not "", when there are only tool calls.

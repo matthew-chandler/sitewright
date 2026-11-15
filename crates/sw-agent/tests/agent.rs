@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sw_agent::{Agent, AgentError, ProviderSource, Run, RunEvent, RunRequest, RunStatus};
+use sw_agent::{Agent, AgentError, ProviderSource, Run, RunEvent, RunRequest, RunStatus, Skills};
 use sw_core::{Config, DataDir};
 use sw_llm::mock::{ScriptedProvider, Turn};
 use sw_llm::{ChatRequest, EventStream, LlmError, LlmProvider, Message};
@@ -43,6 +43,7 @@ async fn env_with(provider: ScriptedProvider, extra: &str) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let data = DataDir::new(dir.path());
     data.ensure().unwrap();
+    let skills_dir = data.skills_dir();
     let db = sw_core::db::open(&data.db_file()).await.unwrap();
     sw_core::db::migrate(&db, &data.backups_dir())
         .await
@@ -57,6 +58,7 @@ async fn env_with(provider: ScriptedProvider, extra: &str) -> Env {
     let agent = Agent::new(
         store.clone(),
         DomainChecker::new(),
+        Skills::new(Some(skills_dir.clone())),
         config,
         Arc::new(Fixed(provider.clone())),
     )
@@ -217,9 +219,10 @@ async fn a_create_run_builds_and_publishes_a_site() {
     assert!(
         requests[0]
             .system
-            .contains("`hikes` (it does not exist yet")
+            .contains("- Name: `hikes`\n- It does not exist yet")
+            && requests[0].system.contains("- `create-site`:")
     );
-    assert_eq!(requests[0].tools.len(), 12);
+    assert_eq!(requests[0].tools.len(), 14);
     assert!(
         matches!(&requests[1].messages[2], Message::Tool { name, is_error: false, .. } if name == "create_site")
     );
@@ -279,7 +282,7 @@ async fn an_edit_run_reads_changes_and_republishes() {
     // The prompt for an existing site lists its files and releases.
     let system = &env.provider.requests()[0].system;
     assert!(
-        system.contains("How to edit this site")
+        system.contains("- `edit-site`:")
             && system.contains("- `index.html`")
             && system.contains("\"first\"")
     );
@@ -551,6 +554,7 @@ async fn gated_env(extra: &str) -> (tempfile::TempDir, SiteStore, Agent, Arc<Gat
     let dir = tempfile::tempdir().unwrap();
     let data = DataDir::new(dir.path());
     data.ensure().unwrap();
+    let skills_dir = data.skills_dir();
     let db = sw_core::db::open(&data.db_file()).await.unwrap();
     sw_core::db::migrate(&db, &data.backups_dir())
         .await
@@ -565,6 +569,7 @@ async fn gated_env(extra: &str) -> (tempfile::TempDir, SiteStore, Agent, Arc<Gat
     let agent = Agent::new(
         store.clone(),
         DomainChecker::new(),
+        Skills::new(Some(skills_dir.clone())),
         config,
         Arc::new(Fixed(gated.clone())),
     )
@@ -618,10 +623,89 @@ async fn runs_interrupted_by_a_restart_are_marked_failed() {
     let run = agent.start(request("a", "x", false)).await.unwrap();
     // A new manager on the same database stands in for a restarted daemon.
     let config = Arc::new(Config::from_toml("[domains]\nzones = [\"example.com\"]\n").unwrap());
-    let restarted = Agent::new(store, DomainChecker::new(), config, Arc::new(Fixed(gated)))
-        .await
-        .unwrap();
+    let restarted = Agent::new(
+        store,
+        DomainChecker::new(),
+        Skills::new(None),
+        config,
+        Arc::new(Fixed(gated)),
+    )
+    .await
+    .unwrap();
     let seen = restarted.get(run.id).await.unwrap();
     assert_eq!(seen.status, RunStatus::Failed);
     assert!(seen.message.unwrap().contains("restarted"));
+}
+
+#[tokio::test]
+async fn skills_are_indexed_loaded_on_demand_and_user_skills_are_picked_up() {
+    let env = env(vec![
+        Turn::tools(&[
+            ("load_skill", json!({"name": "house-style"})),
+            (
+                "read_skill_file",
+                json!({"name": "house-style", "path": "references/palette.md"}),
+            ),
+            ("load_skill", json!({"name": "edit-site"})),
+            ("load_skill", json!({"name": "no-such-skill"})),
+            (
+                "read_skill_file",
+                json!({"name": "house-style", "path": "../../secrets.toml"}),
+            ),
+        ]),
+        Turn::text("Loaded."),
+    ])
+    .await;
+    env.store.create("s", "S", Author::User).await.unwrap();
+    // A skill dropped into <data>/skills after start-up, with no restart.
+    let dir = env._dir.path().join("skills/house-style");
+    std::fs::create_dir_all(dir.join("references")).unwrap();
+    std::fs::write(
+        dir.join("SKILL.md"),
+        "---\nname: house-style\ndescription: Our house colours and tone. Use for every site.\n---\n\nAlways use teal headings.\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("references/palette.md"), "teal: #0aa").unwrap();
+
+    let run = env
+        .agent
+        .start(request("s", "restyle it", false))
+        .await
+        .unwrap();
+    let (run, events) = finish(&env.agent, &run).await;
+    assert_eq!(run.status, RunStatus::Succeeded);
+
+    // The prompt carries the index only: names and descriptions, not instructions.
+    let system = &env.provider.requests()[0].system;
+    assert!(system.contains("- `house-style`: Our house colours and tone. Use for every site."));
+    assert!(system.contains("- `create-site`:") && system.contains("- `setup-domain`:"));
+    assert!(!system.contains("Always use teal headings"));
+    assert!(
+        !system.contains("Look before you edit"),
+        "built-in instructions are loaded on demand too"
+    );
+
+    let results = tool_results(&events);
+    assert_eq!(results[0].2["instructions"], "Always use teal headings.");
+    assert_eq!(results[0].2["files"], json!(["references/palette.md"]));
+    assert_eq!(results[1].2["content"], "teal: #0aa");
+    // Events shorten long results for display; the model itself got the whole skill.
+    assert!(!results[2].1);
+    let full: Vec<String> = env.provider.requests()[1]
+        .messages
+        .iter()
+        .filter_map(|m| match m {
+            Message::Tool { name, content, .. } if name == "load_skill" => Some(content.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(full[1].contains("Look before you edit") && full[1].contains("Common requests"));
+    assert!(
+        results[3].1
+            && results[3].2["error"]
+                .as_str()
+                .unwrap()
+                .contains("available skills")
+    );
+    assert!(results[4].1, "skill files are confined to the skill folder");
 }

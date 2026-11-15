@@ -7,7 +7,9 @@
 pub mod events;
 pub mod prompt;
 pub mod runner;
+pub mod skills;
 pub mod tools;
 
 pub use events::RunEvent;
 pub use runner::{Agent, AgentError, ProviderSource, Run, RunRequest, RunStatus, Subscription};
+pub use skills::Skills;
