@@ -26,9 +26,10 @@ pub const MAX_PROMPT_CHARS: usize = 20_000;
 
 /// Where runs get their model from. The daemon implements this from the configuration;
 /// tests plug in a scripted provider.
+#[async_trait::async_trait]
 pub trait ProviderSource: Send + Sync {
     /// The provider with this id, or the default one for `None`.
-    fn provider(&self, id: Option<&str>) -> Result<Arc<dyn LlmProvider>, String>;
+    async fn provider(&self, id: Option<&str>) -> Result<Arc<dyn LlmProvider>, String>;
 }
 
 /// A request to start a run.
@@ -229,6 +230,7 @@ impl Agent {
         let provider = inner
             .providers
             .provider(request.provider.as_deref())
+            .await
             .map_err(AgentError::Provider)?;
 
         // One run per site, and a global cap on runs in progress.
@@ -386,6 +388,11 @@ impl Agent {
             }
             None => false,
         }
+    }
+
+    /// US dollars spent on runs so far today (UTC).
+    pub async fn spent_today(&self) -> Result<f64, AgentError> {
+        Ok(spent_today(&self.inner.db).await?)
     }
 
     /// Whether a site has a run in progress.

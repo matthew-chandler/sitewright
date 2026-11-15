@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Sitewright{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1>{{ title }}</h1>
+  {% if published %}<a class="button" href="{{ url }}" target="_blank" rel="noopener">Open site</a>{% endif %}
+</div>
+<p class="muted">{{ name }} · {% if published %}<a class="external" href="{{ url }}" target="_blank" rel="noopener">{{ url }}</a>{% else %}not published yet{% endif %}</p>
+
+<section>
+  <h2>Edit with a prompt</h2>
+  {% if busy %}
+  <p class="msg">A run is in progress on this site. Open it under Runs below.</p>
+  {% else %}
+  <form hx-post="/sites/{{ name }}/prompt" hx-target="find .status" hx-disabled-elt="find button">
+    <label for="prompt" class="sr-only">What should change?</label>
+    <textarea id="prompt" name="prompt" rows="4" required maxlength="20000" placeholder="Make the header dark blue and add a contact page"></textarea>
+    {% if providers.len() > 1 %}
+    <label for="provider">Model</label>
+    <select id="provider" name="provider">
+      {% for p in providers %}
+      <option value="{{ p.id }}" {% if p.selected %}selected{% endif %}>{{ p.label }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <button class="primary" type="submit">Run</button>
+    <div class="status" aria-live="polite"></div>
+  </form>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Runs</h2>
+  {% if runs.is_empty() %}
+  <p class="empty">No runs yet.</p>
+  {% else %}
+  <ul class="list">
+    {% for run in runs %}
+    <li>
+      <a href="/runs/{{ run.id }}">
+        <span class="badge {{ run.status }}">{{ run.status }}</span>
+        <span class="muted">{{ run.when }}</span>
+        <span class="clip">{{ run.prompt }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Releases</h2>
+  {% if releases.is_empty() %}
+  <p class="empty">Nothing has been published yet.</p>
+  {% else %}
+  <ul class="list releases">
+    {% for r in releases %}
+    <li>
+      <div>
+        <strong>{{ r.message }}</strong>
+        {% if r.live %}<span class="badge succeeded">live</span>{% endif %}
+        <br>
+        <span class="muted"><code>{{ r.short }}</code> · {{ r.author }} · {{ r.when }}{% if !r.changes.is_empty() %} · {{ r.changes }}{% endif %}</span>
+      </div>
+      {% if !r.live %}
+      <form hx-post="/sites/{{ name }}/rollback" hx-target="find .status"
+            hx-confirm="Switch the live site to this release?" hx-disabled-elt="find button">
+        <input type="hidden" name="release" value="{{ r.sha }}">
+        <button type="submit">Roll back</button>
+        <div class="status" aria-live="polite"></div>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Delete</h2>
+  <details>
+    <summary>Delete this site</summary>
+    <p>The site goes offline at once. It can be restored for a few days with
+       <code>sitewright site restore {{ name }}</code>, then it is gone for good. DNS records are left as they are.</p>
+    <form hx-post="/sites/{{ name }}/delete" hx-target="find .status" hx-disabled-elt="find button">
+      <label for="confirm">Type <strong>{{ name }}</strong> to confirm</label>
+      <input id="confirm" name="confirm" required autocomplete="off" autocapitalize="none" spellcheck="false">
+      <button class="danger" type="submit">Delete site</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+  </details>
+</section>
+{% endblock %}

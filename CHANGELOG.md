@@ -17,3 +17,6 @@ All notable changes to this project are documented here. The format follows
   OpenAI, OpenRouter, Ollama and others), a tool-calling loop with twelve sandboxed tools,
   site validation, turn, token and daily-spend limits, cancellation, replayable run
   events with cost tracking, and `sitewright prompt`.
+- The web UI (M3): a mobile-first, installable admin app with passkey sign-in, live run
+  streaming, release history with one-tap rollback, typed-confirmation delete, provider
+  settings with "Test connection", API tokens, and `sitewright admin invite`.

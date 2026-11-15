@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO invites (token_hash, created_at, expires_at) VALUES (?1, ?2, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "d3c9042987bed94abbf65c31e06200f5fe67ddfe9376fff600225af20e0803b8"
+}

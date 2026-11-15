@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Run {{ id }} · {{ site }} · Sitewright{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1><a href="/sites/{{ site }}">{{ site }}</a> <span class="muted">run {{ id }}</span></h1>
+  <span class="badge {{ status }}" id="run-status">{{ status }}</span>
+</div>
+<blockquote class="prompt">{{ prompt }}</blockquote>
+<p class="muted">{{ model }} <span id="run-usage"></span></p>
+
+<div id="run-log" class="log" data-run="{{ id }}" data-site="{{ site }}" aria-live="polite"></div>
+
+<div id="run-actions" class="actions">
+  {% if running %}
+  <form hx-post="/runs/{{ id }}/cancel" hx-target="find .status" id="run-cancel">
+    <button type="submit">Cancel</button>
+    <span class="status"></span>
+  </form>
+  {% endif %}
+  <a class="button primary" id="run-open" href="/sites/{{ site }}" hidden>View site</a>
+</div>
+
+<section id="run-confirm" class="confirm" hidden>
+  <h2>Confirm deletion</h2>
+  <p>The agent asks to delete <strong>{{ site }}</strong>. It goes offline at once and can be restored for a few days.</p>
+  <form hx-post="/sites/{{ site }}/delete" hx-target="find .status" hx-disabled-elt="find button">
+    <label for="run-confirm-name">Type <strong>{{ site }}</strong> to confirm</label>
+    <input id="run-confirm-name" name="confirm" required autocomplete="off" autocapitalize="none" spellcheck="false">
+    <button class="danger" type="submit">Delete site</button>
+    <div class="status" aria-live="polite"></div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/run.js"></script>{% endblock %}

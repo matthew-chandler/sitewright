@@ -43,6 +43,9 @@ pub enum Command {
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
+    /// Administer the daemon.
+    #[command(subcommand)]
+    Admin(AdminCommand),
     /// Ask the agent to build or change a site.
     Prompt {
         /// Create the site in this run (the name must be free).
@@ -56,6 +59,13 @@ pub enum Command {
         /// What you want, in plain language.
         prompt: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminCommand {
+    /// Print a one-time link for enrolling a passkey. Use it for the first sign-in, and
+    /// again whenever every passkey is lost.
+    Invite,
 }
 
 #[derive(Debug, Subcommand)]
@@ -113,6 +123,19 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             daemon.run_until_signal().await
         }
         Command::Site(command) => site(&loaded, command).await,
+        Command::Admin(AdminCommand::Invite) => {
+            let client = AdminClient::new(&loaded.data_dir)?;
+            let invite: Value = client.post("/v1/admin/invite", &json!({})).await?;
+            println!(
+                "Open this link on the device that should hold the passkey:\n\n  {}\n",
+                str_of(&invite["url"])
+            );
+            println!(
+                "It works once and expires in {} minutes.",
+                invite["valid_minutes"]
+            );
+            Ok(())
+        }
         Command::Prompt {
             new,
             provider,

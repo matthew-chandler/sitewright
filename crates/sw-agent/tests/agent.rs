@@ -18,8 +18,9 @@ const PAGE: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8
     <link rel=\"stylesheet\" href=\"site.css\"></head><body><h1>Hikes</h1></body></html>";
 
 struct Fixed(Arc<dyn LlmProvider>);
+#[async_trait::async_trait]
 impl ProviderSource for Fixed {
-    fn provider(&self, id: Option<&str>) -> Result<Arc<dyn LlmProvider>, String> {
+    async fn provider(&self, id: Option<&str>) -> Result<Arc<dyn LlmProvider>, String> {
         match id {
             Some("missing") => Err("no provider named \"missing\"".into()),
             _ => Ok(self.0.clone()),

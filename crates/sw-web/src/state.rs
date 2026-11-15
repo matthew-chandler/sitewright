@@ -7,6 +7,9 @@ use sw_core::Config;
 use sw_metrics::{RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
 
+use crate::auth::Auth;
+use crate::providers::Providers;
+
 /// Everything a handler needs. Cheap to clone.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -16,28 +19,10 @@ pub struct AppState {
     pub hasher: Arc<VisitorHasher>,
     pub agent: Agent,
     pub domains: DomainChecker,
+    pub providers: Providers,
+    pub auth: Arc<Auth>,
     /// The admin UI's hostname, normalized.
     pub admin_host: Arc<str>,
-}
-
-impl AppState {
-    pub fn new(
-        config: Arc<Config>,
-        store: SiteStore,
-        request_log: RequestLog,
-        hasher: Arc<VisitorHasher>,
-        agent: Agent,
-        domains: DomainChecker,
-    ) -> Self {
-        let admin_host = config.domains.admin_host().into();
-        Self {
-            config,
-            store,
-            request_log,
-            hasher,
-            agent,
-            domains,
-            admin_host,
-        }
-    }
+    /// The admin UI's origin, for example `https://admin.example.com`.
+    pub admin_origin: Arc<str>,
 }

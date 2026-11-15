@@ -16,6 +16,7 @@ sw-core.workspace = true
 sw-sites.workspace = true
 sw-metrics.workspace = true
 sw-agent.workspace = true
+sw-llm.workspace = true
 axum = "0.8.9"
 http-body-util = "0.1.5"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -26,3 +27,19 @@ tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["fs", "compression-gzip", "compression-br", "trace"] }
 tracing = "0.1.44"
 futures-util = "0.3.34"
+webauthn-rs = "0.6.2"
+base64 = "0.23.1"
+rand = "0.10.3"
+sha2 = "0.11.1"
+hex = "0.4.3"
+url = "2.5.8"
+uuid = { version = "1.29.2", features = ["v4"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+askama = "0.16.1"
+rust-embed = "8.14.0"
+mime_guess = "2.0.5"
+async-trait = "0.1.92"
+toml = "1.2.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

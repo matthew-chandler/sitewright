@@ -5,13 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use sw_agent::{Agent, ProviderSource};
+use sw_agent::Agent;
 use sw_core::DataDir;
 use sw_core::config::Loaded;
-use sw_llm::LlmProvider;
 use sw_metrics::{RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
 use sw_web::AppState;
+use sw_web::auth::Auth;
+use sw_web::providers::Providers;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -60,21 +61,33 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     let hasher = Arc::new(VisitorHasher::load(db.clone()).await);
     let (request_log, log_writer) = RequestLog::spawn(db.clone());
     let domains = DomainChecker::new();
-    let providers = Arc::new(ConfiguredProviders {
-        config: config.clone(),
-        secrets_file: data.secrets_file(),
-    });
-    let agent = Agent::new(store.clone(), domains.clone(), config.clone(), providers)
-        .await
-        .context("cannot start the agent")?;
-    let state = AppState::new(
-        config.clone(),
+    let providers = Providers::new(config.clone(), db.clone(), data.secrets_file());
+    let agent = Agent::new(
         store.clone(),
+        domains.clone(),
+        config.clone(),
+        Arc::new(providers.clone()),
+    )
+    .await
+    .context("cannot start the agent")?;
+    let auth = Auth::new(
+        db.clone(),
+        &config.domains.admin_host(),
+        &config.domains.admin_origin(),
+    )
+    .context("cannot set up authentication")?;
+    let state = AppState {
+        admin_host: config.domains.admin_host().into(),
+        admin_origin: config.domains.admin_origin().into(),
+        config: config.clone(),
+        store: store.clone(),
         request_log,
         hasher,
         agent,
         domains,
-    );
+        providers,
+        auth: Arc::new(auth),
+    };
 
     let listen = listen.unwrap_or(config.server.listen);
     let listener = TcpListener::bind(listen)
@@ -103,7 +116,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         }
     }));
 
-    let api = sw_web::api::router(state.clone());
+    let api = sw_web::api::socket_router(state.clone());
     let token = cancel.clone();
     servers.push(tokio::spawn(async move {
         if let Err(error) = sw_web::socket::serve(socket, api, token.cancelled_owned()).await {
@@ -137,26 +150,6 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         servers,
         log_writer,
     })
-}
-
-/// Builds providers from the configuration. Secrets are read on every call, so a key
-/// added to `secrets.toml` works without a restart.
-struct ConfiguredProviders {
-    config: Arc<sw_core::Config>,
-    secrets_file: std::path::PathBuf,
-}
-
-impl ProviderSource for ConfiguredProviders {
-    fn provider(&self, id: Option<&str>) -> Result<Arc<dyn LlmProvider>, String> {
-        let llm = &self.config.llm;
-        let provider = llm.provider(id).ok_or_else(|| match id {
-            Some(id) => format!("there is no LLM provider with id {id:?} in the configuration"),
-            None => "no LLM provider is configured; add one under [[llm.providers]] in config.toml"
-                .to_owned(),
-        })?;
-        let secrets = sw_core::Secrets::load(&self.secrets_file).map_err(|e| e.to_string())?;
-        sw_llm::build_provider(provider, &secrets).map_err(|e| e.to_string())
-    }
 }
 
 /// After each publish, fetch the site's front page through the daemon's own listener,

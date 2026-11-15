@@ -25,7 +25,11 @@ async fn unknown_hosts_get_a_plain_404() {
 #[tokio::test]
 async fn admin_host_answers_and_is_not_a_site() {
     let t = boot().await;
+    // Without a session the admin UI sends browsers to the sign-in page.
     let res = t.get(ADMIN, "/").await;
+    assert_eq!(res.status(), 303);
+    assert_eq!(res.headers()["location"], "/login");
+    let res = t.get(ADMIN, "/login").await;
     assert_eq!(res.status(), 200);
     assert!(res.text().await.unwrap().contains("Sitewright"));
     assert_eq!(

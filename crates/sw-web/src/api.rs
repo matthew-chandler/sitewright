@@ -44,6 +44,25 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// The router for the admin Unix socket: the API plus operations that only someone with
+/// shell access to the server may perform.
+pub fn socket_router(state: AppState) -> Router {
+    let local = Router::new()
+        .route("/v1/admin/invite", post(create_invite))
+        .with_state(state.clone());
+    router(state).merge(local)
+}
+
+/// Create a one-time passkey enrollment link. Reachable only over the admin socket:
+/// shell access is the root of trust, and this is the recovery path.
+async fn create_invite(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+    let token = state.auth.create_invite().await?;
+    Ok(Json(json!({
+        "url": format!("{}/enroll/{token}", state.admin_origin),
+        "valid_minutes": crate::auth::INVITE_MINUTES,
+    })))
+}
+
 async fn health(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "status": "ok",

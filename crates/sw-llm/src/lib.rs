@@ -182,3 +182,60 @@ pub struct Collected {
     pub usage: Usage,
     pub stop: Option<StopReason>,
 }
+
+/// The outcome of [`test_connection`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionTest {
+    pub ok: bool,
+    pub latency_ms: u64,
+    /// What happened, in words.
+    pub detail: String,
+}
+
+/// Send a tiny request that asks the model to call a tool, and report whether it did.
+/// This exercises exactly what the agent needs: authentication, streaming and tool calls.
+pub async fn test_connection(provider: &dyn LlmProvider) -> ConnectionTest {
+    let request = ChatRequest {
+        system: "You are a connection test. Call the `ping` tool once with the value \"pong\" and say nothing else.".into(),
+        messages: vec![Message::User { content: "Run the connection test now.".into() }],
+        tools: vec![ToolDef {
+            name: "ping".into(),
+            description: "Connection test. Call it with value \"pong\".".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "value": { "type": "string" } },
+                "required": ["value"],
+                "additionalProperties": false,
+            }),
+        }],
+    };
+    let started = std::time::Instant::now();
+    let outcome = match provider.stream(request).await {
+        Ok(stream) => collect(stream).await,
+        Err(e) => Err(e),
+    };
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match outcome {
+        Ok(response) if response.tool_calls.iter().any(|c| c.name == "ping") => ConnectionTest {
+            ok: true,
+            latency_ms,
+            detail: format!(
+                "{} answered with a tool call, as the agent needs",
+                provider.model()
+            ),
+        },
+        Ok(_) => ConnectionTest {
+            ok: false,
+            latency_ms,
+            detail: format!(
+                "{} answered, but did not call the test tool. The agent needs a model with reliable tool calling.",
+                provider.model()
+            ),
+        },
+        Err(e) => ConnectionTest {
+            ok: false,
+            latency_ms,
+            detail: e.to_string(),
+        },
+    }
+}

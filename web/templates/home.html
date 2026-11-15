@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Sites · Sitewright{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1>Sites</h1>
+  <a class="button primary" href="/new">New site</a>
+</div>
+{% if sites.is_empty() %}
+<p class="empty">No sites yet. Describe one and it will be live in a minute or two.</p>
+{% else %}
+<ul class="grid">
+  {% for site in sites %}
+  <li class="card">
+    <a class="card-link" href="/sites/{{ site.name }}">
+      <span class="dot {{ site.state }}" aria-hidden="true"></span>
+      <strong>{{ site.title }}</strong>
+    </a>
+    <span class="muted">{{ site.name }} · {{ site.state_label }} · deployed {{ site.deployed }}</span>
+    <a class="external" href="{{ site.url }}" target="_blank" rel="noopener">{{ site.url }}</a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>Recent runs</h2>
+{% if runs.is_empty() %}
+<p class="empty">Nothing has run yet.</p>
+{% else %}
+<ul class="list">
+  {% for run in runs %}
+  <li>
+    <a href="/runs/{{ run.id }}">
+      <span class="badge {{ run.status }}">{{ run.status }}</span>
+      <strong>{{ run.site }}</strong>
+      <span class="muted">{{ run.when }}</span>
+      <span class="clip">{{ run.prompt }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

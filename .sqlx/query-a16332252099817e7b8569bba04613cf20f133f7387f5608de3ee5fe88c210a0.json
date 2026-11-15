@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE api_tokens SET last_used_at = ?1 WHERE token_hash = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a16332252099817e7b8569bba04613cf20f133f7387f5608de3ee5fe88c210a0"
+}
