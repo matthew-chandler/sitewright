@@ -22,6 +22,8 @@ pub struct AppState {
     pub domains: DomainChecker,
     pub providers: Providers,
     pub auth: Arc<Auth>,
+    /// The certificate manager, once it is running (standalone mode only).
+    pub tls: Arc<std::sync::OnceLock<sw_tls::Manager>>,
     /// The admin UI's hostname, normalized.
     pub admin_host: Arc<str>,
     /// The admin UI's origin, for example `https://admin.example.com`.

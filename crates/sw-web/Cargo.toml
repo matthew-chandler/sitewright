@@ -17,6 +17,7 @@ sw-sites.workspace = true
 sw-metrics.workspace = true
 sw-agent.workspace = true
 sw-llm.workspace = true
+sw-tls.workspace = true
 axum = "0.8.9"
 http-body-util = "0.1.5"
 serde = { version = "1.0.229", features = ["derive"] }

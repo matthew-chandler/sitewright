@@ -3358,6 +3358,7 @@ dependencies = [
  "futures-util",
  "p256",
  "rand",
+ "rcgen",
  "reqwest",
  "serde",
  "serde_json",
@@ -3368,13 +3369,16 @@ dependencies = [
  "sw-llm",
  "sw-metrics",
  "sw-sites",
+ "sw-tls",
  "sw-web",
  "tempfile",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "wiremock",
+ "x509-parser",
 ]
 
 [[package]]
@@ -3797,6 +3801,7 @@ dependencies = [
  "sw-llm",
  "sw-metrics",
  "sw-sites",
+ "sw-tls",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

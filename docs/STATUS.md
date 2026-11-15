@@ -7,9 +7,8 @@ _Last updated: 2026-11-15 (M5 done; M6 next)_
 
 ## Needs from Matthew
 
-1. **Retry the installed app (home-screen) sign-in**, and run checklist step 14 (airplane
-   mode) there. The "missing or wrong CSRF token" error you hit after adding the app to
-   the home screen is fixed and deployed (see "Phone checklist results" below).
+1. *(done)* Phone checklist: all 15 steps pass (2026-11-15), including sign-in from the
+   installed app and the offline shell.
 
 2. *(done)* Admin UI over HTTPS and the phone checklist: completed 2026-11-15.
 
@@ -27,7 +26,7 @@ to DNS only.
 | M0 Scaffold | done |
 | M1 Serve sites (proxy mode) | done |
 | M2 Agent with tools, one provider | done |
-| M3 Web UI and passkeys | done, pending the phone checklist (Needs #1, #2) |
+| M3 Web UI and passkeys | done; phone checklist passed 2026-11-15 |
 | M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
 | M5 Metrics and dashboards | done |
 | M6 Standalone TLS, updates, export, v1.0.0 | not started |
@@ -151,7 +150,8 @@ delete, agent-requested delete, provider test.
   itself. Adding a passkey from Settings still needs the token. The sign-in page also asks
   `/auth/session` on load and goes straight to the app when the browser is already signed
   in. Covered by a test.
-- **Not yet run:** step 14 (airplane mode), which needs the installed app.
+- **Re-tested by Matthew after the fix:** sign-in from the home-screen app works, and
+  step 14 (airplane mode) passes. All 15 steps pass.
 
 ## What to test by hand
 

@@ -302,6 +302,16 @@ impl SiteStore {
             .collect())
     }
 
+    /// Every hostname of every active site, published or not: the names this server
+    /// answers for, and the only ones it may request certificates for.
+    pub async fn all_hostnames(&self) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar!(
+            "SELECT h.hostname FROM site_hostnames h JOIN sites s ON s.id = h.site_id WHERE s.status = 'active' ORDER BY h.hostname"
+        )
+        .fetch_all(&self.inner.db)
+        .await?)
+    }
+
     /// The site's releases, newest first.
     pub async fn releases(&self, site_id: i64, limit: i64) -> Result<Vec<Release>> {
         Ok(sqlx::query_as!(

@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use sw_agent::{Agent, Skills};
 use sw_core::DataDir;
-use sw_core::config::Loaded;
+use sw_core::config::{Loaded, ServeMode};
 use sw_metrics::uptime::{Target, UptimeOptions};
 use sw_metrics::{Metrics, RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
@@ -21,8 +21,10 @@ use tokio_util::sync::CancellationToken;
 /// A running daemon. Dropping it does not stop it; call [`Daemon::shutdown`].
 #[derive(Debug)]
 pub struct Daemon {
-    /// The address the public listener is bound to.
+    /// The address the public (plain HTTP) listener is bound to.
     pub addr: SocketAddr,
+    /// The address the HTTPS listener is bound to, in standalone mode.
+    pub https_addr: Option<SocketAddr>,
     pub data: DataDir,
     pub state: AppState,
     cancel: CancellationToken,
@@ -94,6 +96,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         domains,
         providers,
         auth: Arc::new(auth),
+        tls: Arc::default(),
     };
 
     let listen = listen.unwrap_or(config.server.listen);
@@ -106,15 +109,49 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         .await
         .with_context(|| format!("cannot bind admin socket {}", socket_path.display()))?;
 
-    install_health_check(&store, addr);
-
     let cancel = CancellationToken::new();
     let mut servers = Vec::new();
 
     let public = sw_web::public_router(state.clone());
+    install_health_check(&store, public.clone());
+    let mut https_addr = None;
+    let plain = if config.server.mode == ServeMode::Standalone {
+        // Standalone: terminate TLS here. The plain listener answers ACME challenges and
+        // (unless told otherwise) redirects everything else to HTTPS.
+        let challenges = sw_tls::Challenges::default();
+        let certs = sw_tls::CertStore::open(&data.certs_dir())
+            .context("cannot open the certificate store")?;
+        let https = TcpListener::bind(config.tls.https_listen)
+            .await
+            .with_context(|| format!("cannot listen on {} for HTTPS", config.tls.https_listen))?;
+        let bound = https.local_addr()?;
+        https_addr = Some(bound);
+        let tls_config = sw_tls::serve::server_config(certs.clone());
+        servers.push(tokio::spawn(sw_tls::serve::serve_https(
+            https,
+            tls_config,
+            public.clone(),
+            cancel.clone(),
+        )));
+        servers.push(tokio::spawn(run_certificates(
+            state.clone(),
+            data.clone(),
+            certs,
+            challenges.clone(),
+            cancel.clone(),
+        )));
+        let redirect_port = config
+            .tls
+            .redirect_http
+            .then(|| config.domains.public_port.unwrap_or(bound.port()));
+        tracing::info!(https = %bound, directory = %config.tls.acme_directory, "standalone mode: serving HTTPS");
+        sw_tls::serve::http_app(challenges, redirect_port, public)
+    } else {
+        public
+    };
     let token = cancel.clone();
     servers.push(tokio::spawn(async move {
-        let service = public.into_make_service_with_connect_info::<SocketAddr>();
+        let service = plain.into_make_service_with_connect_info::<SocketAddr>();
         if let Err(error) = axum::serve(listener, service)
             .with_graceful_shutdown(token.cancelled_owned())
             .await
@@ -211,12 +248,91 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     tracing::info!(%addr, admin_host = %state.admin_host, sites = state.store.routes().len(), "listening");
     Ok(Daemon {
         addr,
+        https_addr,
         data,
         state,
         cancel,
         servers,
         log_writer,
     })
+}
+
+/// Keep certificates in step with the served hostnames. Runs until cancelled. The ACME
+/// account is opened here, with retries, so a certificate authority that is unreachable
+/// at start-up delays certificates but never the daemon.
+async fn run_certificates(
+    state: AppState,
+    data: DataDir,
+    certs: sw_tls::CertStore,
+    challenges: sw_tls::Challenges,
+    cancel: CancellationToken,
+) {
+    let tls = state.config.tls.clone();
+    let account_file = data.acme_dir().join("account.json");
+    let acme = loop {
+        let opened = sw_tls::Acme::open(
+            &account_file,
+            &tls.acme_directory,
+            tls.acme_contact.as_deref(),
+            tls.acme_root_cert.as_ref(),
+            challenges.clone(),
+        );
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            result = opened => match result {
+                Ok(acme) => break acme,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot reach the ACME directory yet; retrying in a minute");
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    }
+                }
+            },
+        }
+    };
+
+    // Before asking for a certificate, make sure the name really arrives here over HTTP.
+    let precheck: Option<sw_tls::manager::Precheck> = tls.precheck.then(|| {
+        let domains = state.domains.clone();
+        let check: sw_tls::manager::Precheck = Arc::new(move |hostname: String| {
+            let domains = domains.clone();
+            Box::pin(async move {
+                let result = domains.check(&hostname, 80).await;
+                if result.reaches_this_server {
+                    Ok(())
+                } else {
+                    Err(result.detail)
+                }
+            })
+        });
+        check
+    });
+    let options = sw_tls::ManagerOptions {
+        scan_interval: Duration::from_secs(tls.scan_interval_secs.max(1)),
+        precheck,
+        ..sw_tls::ManagerOptions::default()
+    };
+    let manager = sw_tls::Manager::new(acme, certs, options);
+    let _ = state.tls.set(manager.clone());
+
+    // Only names that belong to a site (and, if wanted, the admin host) get certificates.
+    let (store, admin_host, include_admin) = (
+        state.store.clone(),
+        state.admin_host.to_string(),
+        tls.include_admin_host,
+    );
+    let hostnames: sw_tls::manager::Hostnames = Arc::new(move || {
+        let (store, admin_host) = (store.clone(), admin_host.clone());
+        Box::pin(async move {
+            let mut names = store.all_hostnames().await.unwrap_or_default();
+            if include_admin && !names.contains(&admin_host) {
+                names.push(admin_host);
+            }
+            names
+        })
+    });
+    let _ = manager.spawn(hostnames, cancel).await;
 }
 
 /// The address to reach our own listener at.
@@ -228,35 +344,40 @@ fn loopback(addr: SocketAddr) -> SocketAddr {
     }
 }
 
-/// After each publish, fetch the site's front page through the daemon's own listener,
-/// exactly as a proxy would. A release that cannot be served is rolled back.
-fn install_health_check(store: &SiteStore, addr: SocketAddr) {
-    let target = loopback(addr);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .no_proxy()
-        .build();
-    let Ok(client) = client else { return };
-    store.set_health_check(Arc::new(move |route, hostname| {
-        let client = client.clone();
+/// After each publish, request the site's front page from the same application that
+/// serves visitors, exactly as a proxy would present it. A release that cannot be served
+/// is rolled back. The request goes straight into the router rather than over the
+/// network, so it works the same in proxy and standalone mode.
+fn install_health_check(store: &SiteStore, app: axum::Router) {
+    use tower::ServiceExt;
+    store.set_health_check(Arc::new(move |_route, hostname| {
+        let app = app.clone();
         Box::pin(async move {
-            let response = client
-                .get(format!("http://{target}/"))
+            let mut request = axum::http::Request::builder()
+                .uri("/")
                 .header("host", &hostname)
                 .header(
                     "user-agent",
                     concat!("sitewright-healthcheck/", env!("CARGO_PKG_VERSION")),
                 )
-                .send()
+                .body(axum::body::Body::empty())
+                .map_err(|e| format!("could not build the health check request: {e}"))?;
+            let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(local));
+            let response = tokio::time::timeout(Duration::from_secs(5), app.oneshot(request))
                 .await
-                .map_err(|e| format!("could not fetch the front page of {hostname}: {e}"))?;
+                .map_err(|_| {
+                    format!("the front page of {hostname} did not answer within 5 seconds")
+                })?
+                .unwrap_or_else(|never| match never {});
             if !response.status().is_success() {
                 return Err(format!(
                     "the front page of {hostname} returned {}",
                     response.status()
                 ));
             }
-            let _ = route;
             Ok(())
         })
     }));
@@ -273,14 +394,16 @@ impl Daemon {
             state, log_writer, ..
         } = self;
         let db = state.store.db().clone();
-        // The log writer stops once every handle to it is gone.
-        drop(state);
-        if tokio::time::timeout(Duration::from_secs(5), log_writer)
+        // Write out what is queued, then stop the writer. (Waiting for every handle to
+        // drop is not an option: the publish health check keeps the application alive.)
+        if tokio::time::timeout(Duration::from_secs(5), state.request_log.flush())
             .await
             .is_err()
         {
             tracing::warn!("request log did not flush in time");
         }
+        log_writer.abort();
+        drop(state);
         db.close().await;
     }
 

@@ -311,6 +311,12 @@ struct ProviderRow {
     is_default: bool,
 }
 
+struct TlsRow {
+    hostname: String,
+    ok: bool,
+    detail: String,
+}
+
 struct PasskeyRow {
     id: i64,
     name: String,
@@ -338,6 +344,7 @@ struct SettingsPage {
     max_run_tokens: u64,
     daily_cap: String,
     spent_today: String,
+    tls: Vec<TlsRow>,
     passkeys: Vec<PasskeyRow>,
     can_remove_passkey: bool,
     tokens: Vec<TokenRow>,
@@ -798,6 +805,40 @@ async fn settings_page(
             last_used: when(t.last_used_at),
         })
         .collect();
+    let now = now_ms() / 1000;
+    let tls = state
+        .tls
+        .get()
+        .map(|manager| manager.status())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|host| match (host.certificate, host.last_error) {
+            (Some(cert), error) => TlsRow {
+                hostname: host.hostname,
+                ok: cert.remaining(now) > 0,
+                detail: match error {
+                    Some(error) => format!(
+                        "certificate valid for {} more days; renewal failed: {error}",
+                        cert.remaining(now) / 86_400
+                    ),
+                    None => format!(
+                        "certificate valid for {} more days",
+                        cert.remaining(now) / 86_400
+                    ),
+                },
+            },
+            (None, Some(error)) => TlsRow {
+                hostname: host.hostname,
+                ok: false,
+                detail: error,
+            },
+            (None, None) => TlsRow {
+                hostname: host.hostname,
+                ok: false,
+                detail: "waiting for a certificate".into(),
+            },
+        })
+        .collect();
     let spent = state.agent.spent_today().await.unwrap_or(0.0);
     render(SettingsPage {
         chrome: Chrome::for_session(&session),
@@ -812,6 +853,7 @@ async fn settings_page(
         max_run_tokens: state.config.agent.max_run_tokens,
         daily_cap: format!("{:.2}", state.config.agent.daily_spend_cap_usd),
         spent_today: format!("{spent:.2}"),
+        tls,
         can_remove_passkey: passkeys.len() > 1,
         passkeys,
         tokens,

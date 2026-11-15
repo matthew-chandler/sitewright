@@ -415,6 +415,8 @@ pub struct TlsConfig {
     /// Before asking for a certificate, check that the hostname reaches this server, so
     /// names that cannot validate do not use up the certificate authority's rate limits.
     pub precheck: bool,
+    /// Seconds between scans for hostnames that need a certificate.
+    pub scan_interval_secs: u64,
 }
 
 /// Let's Encrypt's production directory.
@@ -432,6 +434,7 @@ impl Default for TlsConfig {
             redirect_http: true,
             include_admin_host: true,
             precheck: true,
+            scan_interval_secs: 30,
         }
     }
 }

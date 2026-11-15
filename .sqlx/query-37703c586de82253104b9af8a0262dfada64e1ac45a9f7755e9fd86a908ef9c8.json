@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT h.hostname FROM site_hostnames h JOIN sites s ON s.id = h.site_id WHERE s.status = 'active' ORDER BY h.hostname",
+  "describe": {
+    "columns": [
+      {
+        "name": "hostname",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "hostname"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "37703c586de82253104b9af8a0262dfada64e1ac45a9f7755e9fd86a908ef9c8"
+}
