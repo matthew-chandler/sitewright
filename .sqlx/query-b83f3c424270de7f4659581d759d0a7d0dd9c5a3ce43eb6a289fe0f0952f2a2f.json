@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT sha FROM releases\n               WHERE site_id = ?1\n                 AND id NOT IN (SELECT id FROM releases WHERE site_id = ?1 ORDER BY id DESC LIMIT ?2)\n                 AND id IS NOT (SELECT current_release FROM sites WHERE id = ?1)",
+  "describe": {
+    "columns": [
+      {
+        "name": "sha",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "releases",
+            "name": "sha"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b83f3c424270de7f4659581d759d0a7d0dd9c5a3ce43eb6a289fe0f0952f2a2f"
+}

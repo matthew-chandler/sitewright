@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO site_hostnames (site_id, hostname, is_primary, created_at) VALUES (?1, ?2, 0, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "aadf1c5da6919f647b2f7c88a9bca9642d7a9513cdbc503b736ed68f3101cf3c"
+}

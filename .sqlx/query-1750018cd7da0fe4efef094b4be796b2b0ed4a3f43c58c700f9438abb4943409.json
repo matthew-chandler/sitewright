@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE sites SET status = 'active', deleted_at = NULL, updated_at = ?1 WHERE id = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1750018cd7da0fe4efef094b4be796b2b0ed4a3f43c58c700f9438abb4943409"
+}

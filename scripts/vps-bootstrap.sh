@@ -10,6 +10,8 @@
 #        *.dev.<zone>            port 80, plain HTTP (sites; DNS-only record)
 #        sitewright-dev.<zone>   same listen/ssl_* lines as the --like file (admin UI)
 #      It runs `nginx -t` before reloading and removes its file again if the test fails.
+#      If the --like site uses a Let's Encrypt certificate (which is tied to that site's
+#      hostname), it asks certbot for a certificate for the admin host.
 #      No existing nginx file is modified.
 #   3. Opens TCP 18443 in ufw, only if ufw is active.
 #   4. Prints a summary, including the DNS records that must exist.
@@ -27,7 +29,7 @@ LIKE=""
 PUBKEY=""
 DRY_RUN=0
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -109,10 +111,11 @@ else
   LINK=""
 fi
 
-# Copy the listen and ssl_* directives from the reference site, so the admin host
-# terminates TLS exactly like the existing sites. `default_server` and socket options
-# are stripped because only one server block per socket may carry them.
-like_lines="$(grep -E '^[[:space:]]*(listen|ssl_[a-z_]+)[[:space:]]' "$LIKE" \
+# Copy the listen and ssl_* directives (and certbot's shared TLS options include) from the
+# reference site, so the admin host terminates TLS exactly like the existing sites.
+# `default_server` and socket options are stripped because only one server block per
+# socket may carry them.
+like_lines="$(grep -E '^[[:space:]]*(listen|ssl_[a-z_]+|include[[:space:]]+/etc/letsencrypt/)[^;]*;' "$LIKE" \
   | grep -vE '^[[:space:]]*#' \
   | sed -E 's/^[[:space:]]+//; s/[[:space:]]+#.*$//' \
   | sed -E '/^listen/ s/[[:space:]]+(default_server|ipv6only=[a-z]+|reuseport|deferred|backlog=[0-9]+)//g' \
@@ -121,10 +124,32 @@ if ! printf '%s\n' "$like_lines" | grep -q '^listen'; then
   note "no listen lines found in $LIKE; the admin host will listen on port 80 only"
   like_lines="listen 80;"
 fi
+# The plain-HTTP subset, used while a certificate is being obtained.
+http_lines="$(printf '%s\n' "$like_lines" | grep -E '^listen' | grep -vE '(ssl|443)' || true)"
+http_lines="${http_lines:-listen 80;}"
+
 # Mirror IPv6 for the wildcard block only if the reference site uses it.
 wild_listen="listen 80;"
 if printf '%s\n' "$like_lines" | grep -qE '^listen \[::\]'; then
   wild_listen="$wild_listen"$'\n'"    listen [::]:80;"
+fi
+
+# A Let's Encrypt certificate is issued for specific hostnames. If the reference site uses
+# one, reusing it for the admin host fails validation at Cloudflare (error 525/526), so
+# the admin host needs its own.
+le_ref="$(printf '%s\n' "$like_lines" | sed -nE 's#^ssl_certificate[[:space:]]+/etc/letsencrypt/live/([^/]+)/.*#\1#p' | head -1)"
+need_cert=0
+if [ -n "$le_ref" ] && [ "$le_ref" != "$ADMIN_HOST" ]; then
+  if [ -d "/etc/letsencrypt/live/$ADMIN_HOST" ]; then
+    note "using the existing Let's Encrypt certificate for $ADMIN_HOST"
+  elif command -v certbot >/dev/null; then
+    need_cert=1
+    note "the reference certificate is for $le_ref; requesting one for $ADMIN_HOST with certbot"
+  else
+    note "WARNING: the reference certificate is for $le_ref and certbot is not installed."
+    note "         HTTPS for $ADMIN_HOST will fail until it has its own certificate."
+  fi
+  like_lines="$(printf '%s\n' "$like_lines" | sed "s#/etc/letsencrypt/live/$le_ref/#/etc/letsencrypt/live/$ADMIN_HOST/#g")"
 fi
 
 proxy_block="$(cat <<EOF
@@ -146,7 +171,9 @@ proxy_block="$(cat <<EOF
 EOF
 )"
 
-new_conf="$(cat <<EOF
+# render_conf ADMIN_LINES: the whole nginx file, with the given directives in the admin block.
+render_conf() {
+  cat <<EOF
 # Managed by sitewright scripts/vps-bootstrap.sh. Safe to delete to undo.
 # Dev environment only: proxies to the devtest user's daemon on $UPSTREAM.
 
@@ -167,39 +194,62 @@ ${proxy_block//\$sitewright_dev_proto/\$scheme}
 
 # Admin UI: $ADMIN_HOST (proxied through Cloudflare, TLS as on the existing sites)
 server {
-$(printf '%s\n' "$like_lines" | sed 's/^/    /')
+$(printf '%s\n' "$1" | sed 's/^/    /')
     server_name $ADMIN_HOST;
 
 $proxy_block
 }
 EOF
-)"
+}
 
-note "reference site: $LIKE"
-note "target file:    $CONF"
-if [ "$DRY_RUN" -eq 1 ]; then
-  note "[dry-run] would write this file:"
-  printf '%s\n' "$new_conf" | sed 's/^/      | /'
-  [ -n "$LINK" ] && note "[dry-run] ln -sfn $CONF $LINK"
-  note "[dry-run] nginx -t && systemctl reload nginx"
-else
-  backup=""
+# install_conf CONTENT: write our file, test, reload; restore the previous state on failure.
+install_conf() {
+  local backup=""
   if [ -f "$CONF" ]; then backup="$(mktemp)"; cp -p "$CONF" "$backup"; fi
-  printf '%s\n' "$new_conf" > "$CONF"
+  printf '%s\n' "$1" > "$CONF"
   chmod 0644 "$CONF"
   [ -n "$LINK" ] && ln -sfn "$CONF" "$LINK"
   if nginx -t; then
     systemctl reload nginx
     note "nginx reloaded"
     [ -n "$backup" ] && rm -f "$backup"
+    return 0
+  fi
+  echo "error: nginx -t failed; reverting our file. nginx was NOT reloaded." >&2
+  if [ -n "$backup" ]; then
+    cp -p "$backup" "$CONF"; rm -f "$backup"
   else
-    echo "error: nginx -t failed; reverting our file. nginx was NOT reloaded." >&2
-    if [ -n "$backup" ]; then
-      cp -p "$backup" "$CONF"; rm -f "$backup"
+    rm -f "$CONF"; [ -n "$LINK" ] && rm -f "$LINK"
+  fi
+  return 1
+}
+
+note "reference site: $LIKE"
+note "target file:    $CONF"
+cert_failed=0
+if [ "$DRY_RUN" -eq 1 ]; then
+  if [ "$need_cert" -eq 1 ]; then
+    note "[dry-run] first install the file with the admin host on plain HTTP only, then:"
+    note "[dry-run] certbot certonly --nginx -d $ADMIN_HOST --non-interactive --keep-until-expiring"
+  fi
+  note "[dry-run] would write this file:"
+  render_conf "$like_lines" | sed 's/^/      | /'
+  [ -n "$LINK" ] && note "[dry-run] ln -sfn $CONF $LINK"
+  note "[dry-run] nginx -t && systemctl reload nginx"
+else
+  if [ "$need_cert" -eq 1 ]; then
+    # Serve the admin host on plain HTTP first so the HTTP-01 challenge can be answered.
+    install_conf "$(render_conf "$http_lines")" || exit 1
+    if certbot certonly --nginx -d "$ADMIN_HOST" --non-interactive --keep-until-expiring; then
+      note "certificate issued for $ADMIN_HOST (renewed by certbot's existing timer)"
     else
-      rm -f "$CONF"; [ -n "$LINK" ] && rm -f "$LINK"
+      cert_failed=1
+      echo "warning: certbot could not get a certificate for $ADMIN_HOST." >&2
+      echo "         The admin host stays on plain HTTP; fix the cause and re-run this script." >&2
     fi
-    exit 1
+  fi
+  if [ "$cert_failed" -eq 0 ]; then
+    install_conf "$(render_conf "$like_lines")" || exit 1
   fi
 fi
 
@@ -231,4 +281,8 @@ cat <<EOF
     To undo: rm -f $CONF ${LINK:-} && nginx -t && systemctl reload nginx
 EOF
 [ "$DRY_RUN" -eq 1 ] && printf '\n    Dry run: nothing was changed.\n'
+if [ "${cert_failed:-0}" -eq 1 ]; then
+  printf '\n    WARNING: no certificate for %s yet; HTTPS to the admin host will fail.\n' "$ADMIN_HOST"
+  exit 2
+fi
 exit 0

@@ -1,1 +1,19 @@
 //! Sitewright site manager: site store, git history, releases, validation and export.
+//!
+//! The [`SiteStore`] is the only code that changes sites. Everything else (the CLI, the web
+//! UI and the agent's tools) goes through it, so its guardrails apply to all of them.
+
+pub mod confine;
+pub mod error;
+mod git;
+pub mod import;
+pub mod routes;
+pub mod store;
+
+pub use error::{Result, SiteError};
+pub use import::ImportFile;
+pub use routes::{Route, RouteTable};
+pub use store::{
+    Author, FileEntry, Hostname, ImportReport, PublishOutcome, Release, Site, SiteInfo, SiteStatus,
+    SiteStore,
+};

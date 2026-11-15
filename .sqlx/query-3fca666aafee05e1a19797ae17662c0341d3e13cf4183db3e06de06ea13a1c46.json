@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT h.hostname, s.id as \"site_id!\", s.name, r.id as \"release_id!\", r.sha\n               FROM site_hostnames h\n               JOIN sites s ON s.id = h.site_id\n               JOIN releases r ON r.id = s.current_release\n               WHERE s.status = 'active'",
+  "describe": {
+    "columns": [
+      {
+        "name": "hostname",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "hostname"
+          }
+        }
+      },
+      {
+        "name": "site_id!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "sites",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "sites",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "release_id!",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "releases",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "sha",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "releases",
+            "name": "sha"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3fca666aafee05e1a19797ae17662c0341d3e13cf4183db3e06de06ea13a1c46"
+}

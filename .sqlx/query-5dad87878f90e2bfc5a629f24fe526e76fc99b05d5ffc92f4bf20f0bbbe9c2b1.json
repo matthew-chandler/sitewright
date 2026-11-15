@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT hostname FROM site_hostnames WHERE site_id = ?1 ORDER BY is_primary DESC, id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "hostname",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "hostname"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5dad87878f90e2bfc5a629f24fe526e76fc99b05d5ffc92f4bf20f0bbbe9c2b1"
+}

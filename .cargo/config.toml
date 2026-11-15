@@ -1,0 +1,4 @@
+# sqlx query macros are checked against the committed `.sqlx/` data, so builds need no
+# database. After changing a query or a migration, run scripts/sqlx-prepare.sh.
+[env]
+SQLX_OFFLINE = "true"

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh racknerd-dev:*)",
+      "Bash(scp:* racknerd-dev:*)",
+      "Bash(./scripts/deploy-dev.sh:*)",
+      "Bash(./scripts/smoke-dev.sh:*)",
+      "Bash(./scripts/dev-setup.sh:*)"
+    ],
+    "deny": ["Read(./.env)"]
+  }
+}

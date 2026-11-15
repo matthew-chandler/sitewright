@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) as \"n!: i64\" FROM site_hostnames WHERE hostname = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8a95101955a701f186e7d7a2c1a9e2abeb10318a8f24a1f35e101e1d098e2b57"
+}
