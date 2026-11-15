@@ -7,26 +7,11 @@ _Last updated: 2026-11-15 (M5 done; M6 next)_
 
 ## Needs from Matthew
 
-1. **Make the admin UI reachable over HTTPS.** `https://sitewright-dev.machandler.com`
-   still returns Cloudflare error 525, although the origin now has a valid Let's Encrypt
-   certificate for the name (thanks for running certbot) and every handshake tried against
-   it directly succeeds. Options, in order of effort:
+1. **Retry the installed app (home-screen) sign-in**, and run checklist step 14 (airplane
+   mode) there. The "missing or wrong CSRF token" error you hit after adding the app to
+   the home screen is fixed and deployed (see "Phone checklist results" below).
 
-   - **Quickest:** switch the `sitewright-dev` record to **DNS only** (grey cloud). The
-     phone then talks straight to nginx, which has the valid certificate.
-   - **Behind the proxy:** re-run the updated `scripts/vps-bootstrap.sh` (it now copies the
-     `include /etc/letsencrypt/options-ssl-nginx.conf;` line the first version missed, and
-     reuses the new certificate), so the admin block has exactly the TLS settings of the
-     working sites. Whether that line is the cause is unconfirmed.
-   - **If it is still 525:** load the page, then send the output of
-     `sudo tail -n 5 /var/log/nginx/error.log`; that line names the handshake failure.
-
-   This blocks only the phone checklist: passkeys need HTTPS.
-
-2. **Run the phone checklist** in [testing.md](testing.md#manual-checklist-phone-flows)
-   once #1 is done. On the VPS **as devtest, with the data directory named**:
-   `~/bin/sitewright --data-dir ~/sitewright-data admin invite` prints the enrollment link
-   to open on your phone. Tell me what fails, if anything.
+2. *(done)* Admin UI over HTTPS and the phone checklist: completed 2026-11-15.
 
 3. **Create `.claude/settings.json` (optional, convenience).** Claude Code's permission
    classifier refused to let the agent write its own allow-list, which is reasonable. The
@@ -148,6 +133,25 @@ to DNS only.
 - VPS: Ubuntu 20.04, x86_64, 1 vCPU class, ~1 GB RAM, nginx on 80/443. Ports 5000-5004 are
   used by Matthew's existing services; Sitewright dev uses 18080 (HTTP) and 18443 (TLS tests).
 - `gh` in WSL is 2.4.0 (old): no `gh search`, use `gh api`.
+
+## Phone checklist results
+
+**2026-11-15, Android, Firefox, passkey stored in Bitwarden (run by Matthew).** Steps 1 to
+13 and 15 of [testing.md](testing.md#manual-checklist-phone-flows) passed in the browser:
+enrollment, sign-in, create with live streaming, edit, rollback, typed-confirmation
+delete, agent-requested delete, provider test.
+
+- **Found:** in the app installed to the home screen, signing in failed with "missing or
+  wrong CSRF token". Cause: the session cookie is `SameSite=Strict`, so the browser
+  withholds it from the navigation that launches the installed app. The server therefore
+  rendered the sign-in page (with no CSRF token), but the page's own requests did carry
+  the cookie, and the guard then demanded the session's token.
+- **Fixed:** the passkey endpoints (`/auth/*`) no longer need the session's CSRF token;
+  they require the admin `Origin` instead and are protected by the passkey ceremony
+  itself. Adding a passkey from Settings still needs the token. The sign-in page also asks
+  `/auth/session` on load and goes straight to the app when the browser is already signed
+  in. Covered by a test.
+- **Not yet run:** step 14 (airplane mode), which needs the installed app.
 
 ## What to test by hand
 

@@ -93,6 +93,17 @@
     }).catch(function (error) { show(explain(error), true); });
   }
 
+  // A SameSite=Strict cookie is not sent with the navigation that opens the installed
+  // app or follows a link from elsewhere, so the server may show the sign-in page to
+  // someone who is in fact signed in. A same-site request does carry the cookie: ask,
+  // and go straight on.
+  if (document.getElementById("passkey-login")) {
+    fetch("/auth/session", { credentials: "same-origin" })
+      .then(function (response) { return response.json(); })
+      .then(function (state) { if (state.signed_in) window.location.replace("/"); })
+      .catch(function () { /* stay on the sign-in page */ });
+  }
+
   var loginButton = document.getElementById("passkey-login");
   if (loginButton) loginButton.addEventListener("click", function () { run(login, "Waiting for your passkey…"); });
 

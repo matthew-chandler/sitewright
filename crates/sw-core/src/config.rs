@@ -25,6 +25,7 @@ pub struct Config {
     pub llm: LlmConfig,
     pub agent: AgentConfig,
     pub metrics: MetricsConfig,
+    pub tls: TlsConfig,
 }
 
 /// How the daemon is exposed to the network.
@@ -393,6 +394,48 @@ impl Default for MetricsConfig {
     }
 }
 
+/// Built-in TLS, used in standalone mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct TlsConfig {
+    /// HTTPS listen address in standalone mode.
+    pub https_listen: SocketAddr,
+    /// ACME directory URL. Default: Let's Encrypt production.
+    pub acme_directory: String,
+    /// Contact address for the ACME account, for example `admin@example.com`. Optional.
+    pub acme_contact: Option<String>,
+    /// PEM file with an extra root certificate to trust for the ACME server itself. Only
+    /// for test servers such as Pebble.
+    pub acme_root_cert: Option<PathBuf>,
+    /// Redirect plain-HTTP requests to HTTPS (ACME challenges are always answered).
+    /// Turn off when another server in front forwards port 80 and you still want HTTP.
+    pub redirect_http: bool,
+    /// Also get a certificate for the admin hostname.
+    pub include_admin_host: bool,
+    /// Before asking for a certificate, check that the hostname reaches this server, so
+    /// names that cannot validate do not use up the certificate authority's rate limits.
+    pub precheck: bool,
+}
+
+/// Let's Encrypt's production directory.
+pub const LETS_ENCRYPT_PRODUCTION: &str = "https://acme-v02.api.letsencrypt.org/directory";
+/// Let's Encrypt's staging directory: untrusted certificates, generous rate limits.
+pub const LETS_ENCRYPT_STAGING: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            https_listen: SocketAddr::from(([0, 0, 0, 0], 443)),
+            acme_directory: LETS_ENCRYPT_PRODUCTION.to_owned(),
+            acme_contact: None,
+            acme_root_cert: None,
+            redirect_http: true,
+            include_admin_host: true,
+            precheck: true,
+        }
+    }
+}
+
 /// Where the configuration came from, after resolving flags, environment and defaults.
 #[derive(Debug, Clone)]
 pub struct Loaded {
@@ -516,6 +559,11 @@ impl Config {
                     self.domains.admin_host()
                 )));
             }
+        }
+        if !(self.tls.acme_directory.starts_with("https://")
+            || self.tls.acme_directory.starts_with("http://"))
+        {
+            return Err(Error::Config("tls.acme_directory must be a URL".into()));
         }
         if self.sites.keep_releases == 0 {
             return Err(Error::Config(

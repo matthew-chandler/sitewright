@@ -548,6 +548,52 @@ async fn passkey_enrollment_sign_in_csrf_and_sign_out() {
         .await;
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
+    // Opening the installed app: the browser withholds the SameSite=Strict cookie from
+    // that first navigation, so the sign-in page is rendered without a CSRF token, yet
+    // the page's own requests carry the cookie. Signing in must still work, and the page
+    // can find out that it is in fact signed in.
+    let mut app = Browser::new(&t);
+    app.cookie = second.cookie.clone();
+    let state: Value = app.get("/auth/session").await.json().await.unwrap();
+    assert_eq!(state["signed_in"], true);
+    let state: Value = Browser::new(&t)
+        .get("/auth/session")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(state["signed_in"], false);
+    let again = app.sign_in(&mut key).await;
+    assert_eq!(again.status(), StatusCode::OK, "{:?}", again.text().await);
+    // The exemption is for the passkey endpoints only, and only from the admin origin.
+    assert_eq!(
+        app.form("/settings/tokens", &[("name", "x")])
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        app.json("/auth/register/start", json!({})).await.status(),
+        StatusCode::FORBIDDEN,
+        "adding a passkey needs the CSRF token"
+    );
+    let post = |origin: Option<&'static str>| {
+        let mut request = t
+            .http
+            .post(format!("http://{}/auth/login/start", t.daemon.addr))
+            .header("host", ADMIN)
+            .json(&json!({}));
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        request.send()
+    };
+    assert_eq!(
+        post(Some("https://evil.example")).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(post(None).await.unwrap().status(), StatusCode::FORBIDDEN);
+
     // Settings: passkeys, API tokens.
     let settings = browser.get("/settings").await.text().await.unwrap();
     assert!(settings.contains("Test phone") && settings.contains("Add passkey"));

@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(|| async { "ok\n" }))
         .route("/login", get(ui::login_page))
         .route("/enroll/{token}", get(ui::enroll_page))
+        .route("/auth/session", get(session_state))
         .route("/auth/login/start", post(login_start))
         .route("/auth/login/finish", post(login_finish))
         .route("/auth/register/start", post(register_start))
@@ -84,10 +85,25 @@ async fn guard(State(state): State<AppState>, mut request: Request, next: Next) 
         );
     }
 
+    // The passkey endpoints are the one place a state-changing request may arrive
+    // without the session's CSRF token: a browser withholds a SameSite=Strict cookie on
+    // the first navigation from outside (opening the installed app, following a link),
+    // so the sign-in page can be shown, without a token, to someone whose cookie is then
+    // sent with the page's own requests. These endpoints are protected by the passkey
+    // ceremony itself and must come from the admin origin.
+    let is_auth = path.starts_with("/auth/");
+    if is_auth && !safe && header_str(request.headers(), "origin") != Some(&*state.admin_origin) {
+        return deny(
+            StatusCode::FORBIDDEN,
+            "requests from other origins are not allowed",
+        );
+    }
+
     let session = current_session(&state.auth, request.headers()).await;
     let response = match session {
         Some(session) => {
             if !safe
+                && !is_auth
                 && header_str(request.headers(), "x-csrf-token")
                     != Some(session.csrf_token.as_str())
             {
@@ -187,6 +203,13 @@ fn session_response(token: &str) -> Result<Response, ApiError> {
         .into_response())
 }
 
+/// Whether the browser has a valid session. The sign-in page asks this on load: if the
+/// cookie was only withheld from the navigation that opened the page, it goes straight
+/// on to the app instead of asking for the passkey again.
+async fn session_state(session: Option<Extension<Session>>) -> Json<Value> {
+    Json(json!({ "signed_in": session.is_some() }))
+}
+
 #[derive(Debug, Deserialize)]
 struct RegisterStart {
     invite: Option<String>,
@@ -200,7 +223,22 @@ async fn register_start(
     Json(body): Json<RegisterStart>,
 ) -> Result<Json<Value>, ApiError> {
     rate_limit(&state, peer, &headers)?;
-    let session = session.map(|Extension(s)| s);
+    // With an invite, the invite is the authority. Without one, this is a signed-in
+    // user adding a passkey, and that needs the session's CSRF token like any other
+    // change made from the settings page.
+    let session = match (&body.invite, session) {
+        (Some(_), _) => None,
+        (None, Some(Extension(session))) => {
+            if header_str(&headers, "x-csrf-token") != Some(session.csrf_token.as_str()) {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "missing or wrong CSRF token; reload the page and try again",
+                ));
+            }
+            Some(session)
+        }
+        (None, None) => None,
+    };
     let (ceremony, options) = state
         .auth
         .register_start(body.invite.as_deref(), session.as_ref())
