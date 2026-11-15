@@ -27,7 +27,8 @@ tools. It works with any LLM provider (OpenAI-compatible, Anthropic, Gemini) and
 
 ```sh
 ./scripts/dev-setup.sh          # Rust, musl targets and dev tools, all in your home directory
-cargo run -- serve              # http://localhost:8080
+cargo run -- serve --config dev/local.toml                        # admin: http://localhost:8080
+cargo run -- --config dev/local.toml site import hello example    # site:  http://hello.localhost:8080
 cargo nextest run
 ```
 

@@ -5,9 +5,8 @@ Description=Sitewright (dev)
 After=network-online.target
 
 [Service]
-ExecStart=%h/bin/sitewright serve
-Environment=SITEWRIGHT_LISTEN=127.0.0.1:18080
-Environment=SITEWRIGHT_DATA_DIR=%h/sitewright-data
+# Configuration is read from %h/sitewright-data/config.toml (see deploy/dev-vps.toml).
+ExecStart=%h/bin/sitewright serve --data-dir %h/sitewright-data
 Environment=SITEWRIGHT_LOG_FORMAT=json
 Restart=always
 RestartSec=2

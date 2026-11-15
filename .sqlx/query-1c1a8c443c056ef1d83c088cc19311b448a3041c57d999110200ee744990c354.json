@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO releases (site_id, sha, message, author, created_at) VALUES (?1, ?2, ?3, ?4, ?5)\n               ON CONFLICT (site_id, sha) DO UPDATE SET sha = excluded.sha\n               RETURNING id as \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "releases",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1c1a8c443c056ef1d83c088cc19311b448a3041c57d999110200ee744990c354"
+}

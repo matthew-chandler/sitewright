@@ -1,0 +1,12 @@
+# Local development: cargo run -- serve --config dev/local.toml
+# Sites are at http://<name>.localhost:8080, the admin UI at http://localhost:8080.
+
+data_dir = "dev/data"
+
+[server]
+listen = "127.0.0.1:8080"
+
+[domains]
+zones = ["localhost"]
+public_scheme = "http"
+public_port = 8080

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO sites (name, title, status, created_at, updated_at) VALUES (?1, ?2, 'active', ?3, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "30e0d89d6501434d04f0dd71f8d30ebc533776e4990edb5b3bed09f1681f4b3f"
+}

@@ -14,7 +14,9 @@ musl targets), `cargo-zigbuild`, `cargo-nextest`, `cargo-deny`, `cargo-dist`, `s
 ## Everyday commands
 
 ```sh
-cargo run -- serve                                   # http://localhost:8080
+cargo run -- serve --config dev/local.toml           # http://localhost:8080
+cargo run -- --config dev/local.toml site import hello example   # http://hello.localhost:8080
+./scripts/sqlx-prepare.sh                            # after changing a query or migration
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace

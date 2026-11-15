@@ -3,42 +3,36 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M0 done except the nginx bootstrap; M1 next)_
+_Last updated: 2026-11-15 (M1 done; M2 next)_
 
 ## Needs from Matthew
 
-1. **Run the VPS bootstrap once (needs sudo).** It adds one nginx file with two server blocks
-   proxying to `127.0.0.1:18080`, and opens TCP 18443 if ufw is active. It modifies no
-   existing nginx file and reverts itself if `nginx -t` fails.
+1. **Get a certificate for the admin hostname (needs sudo).** The nginx bootstrap copied
+   the `fireworks.machandler.com` Let's Encrypt certificate into the admin block, so
+   Cloudflare rejects the origin (error 525) on `https://sitewright-dev.machandler.com`.
+   On the VPS:
 
    ```sh
-   # from WSL, in ~/projects/sitewright
-   scp scripts/vps-bootstrap.sh <your sudo user>@<vps>:/tmp/
-   # on the VPS: review with --dry-run first, then run for real
-   sudo /tmp/vps-bootstrap.sh --like /etc/nginx/sites-enabled/<an existing machandler.com site> --dry-run
-   sudo /tmp/vps-bootstrap.sh --like /etc/nginx/sites-enabled/<an existing machandler.com site>
+   sudo certbot --nginx -d sitewright-dev.machandler.com
    ```
 
-   `devtest`, its SSH key and lingering already exist, so `--pubkey` is not needed. Until
-   this is done the daemon is only reachable on the VPS itself (`127.0.0.1:18080`); all
-   public-hostname checks in `scripts/smoke-dev.sh` fail with that as the only cause.
+   Nothing else needs re-running. (`scripts/vps-bootstrap.sh` now does this itself, and a
+   later re-run reuses the certificate.) This blocks only the M3 phone test: passkeys need
+   HTTPS.
 
 2. **Create `.claude/settings.json` (optional, convenience).** Claude Code's permission
    classifier refused to let the agent write its own allow-list, which is reasonable. The
    exact file contents are in [development.md](development.md#claude-code-permissions).
 
-3. **Set `*.dev.machandler.com` to DNS only (grey cloud) in Cloudflare.** It currently resolves
-   to Cloudflare addresses (104.21.x / 172.67.x), so it is either proxied or missing and
-   covered by a proxied `*.machandler.com` wildcard. Plain-HTTP sites still work through the
-   proxy, so this does not block M1 to M5, but M6's standalone TLS tests on port 18443 need
-   the name to resolve straight to the VPS (107.174.181.11).
+Done by Matthew so far: nginx bootstrap run (2026-11-15), `*.dev.machandler.com` switched
+to DNS only.
 
 ## Milestones
 
 | Milestone | State |
 | --- | --- |
-| M0 Scaffold | done, pending bootstrap (Needs #1) |
-| M1 Serve sites (proxy mode) | not started |
+| M0 Scaffold | done |
+| M1 Serve sites (proxy mode) | done |
 | M2 Agent with tools, one provider | not started |
 | M3 Web UI and passkeys | not started |
 | M4 Skills and more providers | not started |
@@ -59,14 +53,30 @@ _Last updated: 2026-11-15 (M0 done except the nginx bootstrap; M1 next)_
 - First deploy to the VPS: the daemon runs as a systemd user service and answers `hello` on
   `127.0.0.1:18080`.
 
+- **M1:** config file and data directory; SQLite with embedded migrations and a
+  pre-migration backup; site store (create, file tools with path confinement, import,
+  publish with health check and automatic rollback, rollback, soft delete, restore, purge);
+  host-based routing; static serving (index, clean URLs, `404.html`, caching and security
+  headers, compression); batched request log with daily-rotating visitor hashes; admin Unix
+  socket and the `site` CLI. 41 tests. Deployed: `http://smoke.dev.machandler.com` is live
+  through nginx.
+
 ## In progress
 
-- M1.
+- M2: `LlmProvider` trait, `openai_compat` adapter, agent loop and tools.
 
 ## Next
 
-- M1: config, data directory, SQLite, site store with git and releases, host routing,
-  static serving, request log, CLI and admin socket.
+- M3: web UI and passkeys.
+
+## Decisions worth knowing (beyond the ADRs)
+
+- sqlx is 0.9 with compile-time-checked queries; `.sqlx/` is committed and CI verifies it
+  (`scripts/sqlx-prepare.sh --check`). Run the script after touching a query or migration.
+- `deny.toml` ignores RUSTSEC-2026-0459 (bundled SQLite, local-only attack) with a written
+  justification, because no sqlx release accepts the fixed `libsqlite3-sys` yet.
+- Rollback without a target goes to the release published before the current one, and
+  resets the working tree to match.
 
 ## Environment facts
 
@@ -76,4 +86,7 @@ _Last updated: 2026-11-15 (M0 done except the nginx bootstrap; M1 next)_
 
 ## What to test by hand
 
-Nothing yet.
+- `http://smoke.dev.machandler.com` shows the example site; any other
+  `*.dev.machandler.com` name shows a plain 404.
+- On the VPS as devtest: `~/bin/sitewright --data-dir ~/sitewright-data site list`.
+- `./scripts/smoke-dev.sh` from WSL (the admin-over-HTTPS check fails until Needs #1).

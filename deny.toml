@@ -3,7 +3,14 @@
 targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-gnu"]
 
 [advisories]
-ignore = []
+ignore = [
+  # SQLite < 3.54.0 can leak page-cache memory when it opens a database together with a
+  # crafted -wal file. Local attack vector: it needs someone else to write the database
+  # files. Sitewright's database lives in an owner-only (0700) data directory and is only
+  # ever written by the daemon itself, so there is no less-trusted writer. No sqlx release
+  # accepts the fixed libsqlite3-sys (>= 0.39) yet; remove this entry when one does.
+  { id = "RUSTSEC-2026-0459", reason = "local-only; database files are written only by the daemon; no fixed sqlx release yet" },
+]
 
 [licenses]
 confidence-threshold = 0.9

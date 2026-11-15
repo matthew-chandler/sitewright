@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO requests (ts, site_id, method, path, status, bytes, duration_ms, referrer_host, ua_class, visitor_hash)\n                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": []
+  },
+  "hash": "731e101546c7a173b6eba49cc7f214deccffc7381bd1a3de447e9221579cab90"
+}

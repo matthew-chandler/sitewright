@@ -1,0 +1,15 @@
+# Configuration for the dev VPS (devtest user). Copied to ~/sitewright-data/config.toml by
+# scripts/deploy-dev.sh on first deploy; later edits on the server are never overwritten.
+
+[server]
+mode = "proxy"
+listen = "127.0.0.1:18080"
+# nginx on the same machine forwards requests and sets X-Forwarded-For.
+trusted_proxies = ["127.0.0.1/32"]
+
+[domains]
+zones = ["dev.machandler.com"]
+admin_host = "sitewright-dev.machandler.com"
+# Sites under *.dev are plain HTTP: Cloudflare's free certificate does not cover
+# second-level subdomains.
+public_scheme = "http"
