@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/matthew-chandler/sitewright"
+authors = ["Matthew Chandler"]
+
+[workspace.dependencies]
+sw-core = { path = "crates/sw-core", version = "0.1.0" }
+sw-sites = { path = "crates/sw-sites", version = "0.1.0" }
+sw-agent = { path = "crates/sw-agent", version = "0.1.0" }
+sw-llm = { path = "crates/sw-llm", version = "0.1.0" }
+sw-web = { path = "crates/sw-web", version = "0.1.0" }
+sw-tls = { path = "crates/sw-tls", version = "0.1.0" }
+sw-metrics = { path = "crates/sw-metrics", version = "0.1.0" }
+sw-update = { path = "crates/sw-update", version = "0.1.0" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "abort"
+
+# Faster incremental dev builds: optimise dependencies, not our own crates.
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.dev]
+debug = "line-tables-only"

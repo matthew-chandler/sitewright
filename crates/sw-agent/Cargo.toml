@@ -1,0 +1,14 @@
+[package]
+name = "sw-agent"
+description = "Sitewright agent: the tool-calling loop, its tools and the skills loader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

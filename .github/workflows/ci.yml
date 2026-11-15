@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo nextest run --workspace --no-tests=warn
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  musl:
+    name: musl release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: cargo zigbuild --release --target x86_64-unknown-linux-musl -p sitewright
+      - run: |
+          file target/x86_64-unknown-linux-musl/release/sitewright | tee /dev/stderr | grep -q 'statically linked'
+
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [check, deny, musl]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          test "${{ needs.check.result }}" = success
+          test "${{ needs.deny.result }}" = success
+          test "${{ needs.musl.result }}" = success

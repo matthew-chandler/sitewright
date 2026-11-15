@@ -1,0 +1,31 @@
+[package]
+name = "sitewright"
+description = "Turn a prompt into a live website on your own server: one self-hosted binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sw-update.workspace = true
+sw-metrics.workspace = true
+sw-tls.workspace = true
+sw-web.workspace = true
+sw-llm.workspace = true
+sw-agent.workspace = true
+sw-sites.workspace = true
+anyhow = "1.0.104"
+axum = "0.8.9"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+sw-core.workspace = true
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter"] }
+
+[dev-dependencies]
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }

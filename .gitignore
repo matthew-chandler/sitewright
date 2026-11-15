@@ -1,0 +1,28 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+secrets.toml
+*.key
+*.pem
+minisign*.key
+
+# Build output
+target/
+dist/
+node_modules/
+
+# Local data directories
+/data/
+/dev/data/
+sitewright-data/
+*.db
+*.db-wal
+*.db-shm
+
+# Editor and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.claude/settings.local.json
