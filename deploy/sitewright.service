@@ -1,0 +1,53 @@
+# systemd unit for Sitewright. Installed by install.sh to /etc/systemd/system/.
+#
+# The daemon runs as the unprivileged `sitewright` user and may write only to its data
+# directory and to the directory holding its own binary (for verified self-updates).
+[Unit]
+Description=Sitewright: prompt-to-site host
+Documentation=https://github.com/matthew-chandler/sitewright
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sitewright
+Group=sitewright
+ExecStart=/opt/sitewright/bin/sitewright serve
+Environment=SITEWRIGHT_LOG_FORMAT=json
+# `sitewright update` and its rollback ask the daemon to exit; systemd starts the new binary.
+Restart=always
+RestartSec=2
+
+# State: /var/lib/sitewright, created with mode 0700 and owned by the service user.
+StateDirectory=sitewright
+StateDirectoryMode=0700
+UMask=0077
+
+# Standalone mode binds ports 80 and 443 without being root. Nothing else is granted.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sitewright /opt/sitewright
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

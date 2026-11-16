@@ -40,6 +40,10 @@ pub enum Command {
         #[arg(long, env = "SITEWRIGHT_LISTEN")]
         listen: Option<SocketAddr>,
     },
+    /// Write a starter configuration file.
+    Init(crate::setup::InitArgs),
+    /// Check the installation and report anything that needs attention.
+    Doctor,
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
@@ -144,6 +148,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let daemon = crate::daemon::start(loaded, listen).await?;
             daemon.run_until_signal().await
         }
+        Command::Init(args) => crate::setup::init(&loaded, args),
+        Command::Doctor => crate::setup::doctor(&loaded).await,
         Command::Site(command) => site(&loaded, command).await,
         Command::Admin(AdminCommand::Invite) => {
             let client = AdminClient::new(&loaded.data_dir)?;
