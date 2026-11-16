@@ -16,6 +16,7 @@ sw-core.workspace = true
 sw-sites.workspace = true
 sw-metrics.workspace = true
 sw-agent.workspace = true
+sw-backend.workspace = true
 sw-llm.workspace = true
 sw-tls.workspace = true
 axum = "0.8.9"

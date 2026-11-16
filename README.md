@@ -77,6 +77,7 @@ Full instructions: [docs/install.md](docs/install.md).
 | [Providers](docs/providers.md) | Setting up each LLM provider |
 | [Skills](docs/skills.md) | Built-in skills and writing your own |
 | [Metrics](docs/metrics.md) | What is collected, privacy, dashboards |
+| [Backends](docs/backends.md) | Server-side code and a database per site, and how they are sandboxed |
 | [Operations](docs/operations.md) | Backup, moving servers, updates, troubleshooting |
 | [Security](docs/security.md) | Threat model |
 | [Architecture](docs/architecture.md) | How it is put together |

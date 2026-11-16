@@ -11,6 +11,7 @@ pub mod sitedb;
 pub mod sites;
 pub mod worker;
 
+pub use manager::self_test;
 pub use manager::{
     BackendError, BackendRequest, BackendResponse, Backends, Host, Limits, Target, WorkerCommand,
 };

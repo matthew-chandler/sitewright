@@ -268,7 +268,9 @@ async fn delete_site(
             "to delete a site, confirm by sending its exact name",
         ));
     }
-    Ok(Json(state.store.delete(&name, Author::User).await?))
+    let site = state.store.delete(&name, Author::User).await?;
+    state.backend.release(site.id, &site.name).await;
+    Ok(Json(site))
 }
 
 fn default_true() -> bool {
@@ -296,6 +298,8 @@ async fn rename_site(
         )
         .into());
     }
+    let old = state.store.get(&name).await?;
+    state.backend.release(old.id, &old.name).await;
     let site = state
         .store
         .rename(&name, &body.name, body.redirect, Author::User)

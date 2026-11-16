@@ -744,6 +744,12 @@ impl SiteStore {
 
     // ------------------------------------------------------------------ files
 
+    /// The directory holding the site's working tree (its unpublished files).
+    pub async fn working_tree(&self, name: &str) -> Result<PathBuf> {
+        let site = self.get(name).await?;
+        Ok(self.inner.data.site_repo(&site.name))
+    }
+
     /// The files in the site's working tree.
     pub async fn list_files(&self, name: &str) -> Result<Vec<FileEntry>> {
         let site = self.get(name).await?;

@@ -79,7 +79,10 @@ pub fn build(
 ) -> Result<Export> {
     std::fs::create_dir_all(exports_dir)?;
     clean(exports_dir);
-    let (files, _) = confine::walk(release_dir)?;
+    let (mut files, _) = confine::walk(release_dir)?;
+    // An export is for static hosts: the backend's code cannot run there and must not
+    // be published as files.
+    files.retain(|f| !confine::is_backend_path(&f.rel));
     if files.is_empty() {
         return Err(SiteError::Invalid(format!(
             "site {site} has no files to export"

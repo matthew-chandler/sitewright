@@ -79,10 +79,29 @@
   {% endif %}
 </section>
 
+{% if let Some(b) = backend %}
+<section>
+  <h2>Backend</h2>
+  <p class="muted">This site has a backend that answers <code>/api/</code> requests.{% if !b.database.is_empty() %} Its database is {{ b.database }}.{% endif %}</p>
+  {% if b.logs.is_empty() %}
+  <p class="empty">No console output yet.</p>
+  {% else %}
+  <details>
+    <summary>Console output ({{ b.logs.len() }} most recent lines)</summary>
+    <ul class="list backend-log">
+      {% for line in b.logs %}
+      <li><span class="badge {{ line.level }}">{{ line.level }}</span>{% if line.draft %} <span class="badge">draft</span>{% endif %} <span class="muted">{{ line.when }}</span> <code>{{ line.message }}</code></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
 <section>
   <h2>Export</h2>
   {% if published %}
-  <p class="muted">Download the live release to host it somewhere else.</p>
+  <p class="muted">Download the live release to host it somewhere else.{% if backend.is_some() %} The export holds the static files only; the backend runs on Sitewright.{% endif %}</p>
   <div class="row">
     <a class="button" href="/sites/{{ name }}/export/folder" download>Files (.tar.gz)</a>
     <a class="button" href="/sites/{{ name }}/export/context" download>Docker build context</a>

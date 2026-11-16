@@ -117,6 +117,9 @@ summary { cursor: pointer; font-weight: 600; }
 .log .text.md table { border-collapse: collapse; display: block; overflow-x: auto; }
 .log .text.md th, .log .text.md td { border: 1px solid var(--line); padding: 0.25rem 0.5rem; text-align: left; }
 .log .text.md blockquote { margin: 0.5rem 0; padding-left: 0.75rem; border-left: 3px solid var(--line); color: var(--muted); }
+.backend-log li { display: block; padding: 0.35rem 0; }
+.backend-log code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+.badge.error { color: var(--danger); border-color: var(--danger); }
 .log .tool { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.6rem; overflow-wrap: anywhere; }
 .log .tool.error { color: var(--danger); border-color: var(--danger); }
 .log .tool .name { color: var(--text); font-weight: 600; }

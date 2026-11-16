@@ -226,7 +226,7 @@ async fn a_create_run_builds_and_publishes_a_site() {
             .contains("- Name: `hikes`\n- It does not exist yet")
             && requests[0].system.contains("- `create-site`:")
     );
-    assert_eq!(requests[0].tools.len(), 18);
+    assert_eq!(requests[0].tools.len(), 21);
     assert!(
         matches!(&requests[1].messages[2], Message::Tool { name, is_error: false, .. } if name == "create_site")
     );

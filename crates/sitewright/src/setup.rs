@@ -286,6 +286,22 @@ pub async fn doctor(loaded: &Loaded) -> anyhow::Result<()> {
         status["daily_cap_usd"].as_f64().unwrap_or(0.0)
     ));
 
+    println!("\nBackends");
+    if !loaded.config.backends.enabled {
+        report.ok("turned off ([backends] enabled = false)");
+    } else {
+        match crate::daemon::worker_command() {
+            Ok(command) => match sw_backend::self_test(command).await {
+                Ok(()) => report.ok("a sandboxed worker starts and answers"),
+                Err(error) => report.fail(format!(
+                    "site backends cannot run here: {error}. They need Linux with seccomp; \
+                     set [backends] enabled = false to silence this"
+                )),
+            },
+            Err(error) => report.fail(format!("site backends cannot run here: {error:#}")),
+        }
+    }
+
     println!("\nSites");
     let sites = status["sites"].as_array().cloned().unwrap_or_default();
     if sites.is_empty() {

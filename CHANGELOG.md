@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-16
+
+### Added
+
+- **Site backends.** A site can have server-side JavaScript under `backend/` that answers
+  its `/api/` requests, with its own SQLite database and migrations. The code runs in a
+  worker process per site that is jailed with seccomp and can reach nothing but its own
+  site's database. See `docs/backends.md` and ADR-0006.
+- The agent has a `build-backend` skill and three tools: `test_backend` (try unpublished
+  code against a private copy of the data), `backend_logs` and `backend_schema`.
+- Publishing a backend checks that the code loads and applies its migrations; the
+  database is restored if the release is rolled back by a failed health check.
+- The site page shows a Backend section with the database size and console output.
+- `sitewright doctor` checks that a sandboxed worker can start.
+- `[backends]` configuration: limits, and `enabled = false` to turn the feature off.
+
+### Changed
+
+- Exports contain the static files only, without `backend/`.
+- A NULL in a typed column of a dashboard query is now reported as null, not as 0.
+
 ## [1.2.0] - 2026-11-16
 
 ### Added

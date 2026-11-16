@@ -19,6 +19,8 @@ pub struct AppState {
     pub hasher: Arc<VisitorHasher>,
     pub metrics: Metrics,
     pub agent: Agent,
+    /// Site backends: the workers and databases behind `/api/*`.
+    pub backend: sw_backend::SiteBackends,
     pub domains: DomainChecker,
     pub providers: Providers,
     pub auth: Arc<Auth>,
