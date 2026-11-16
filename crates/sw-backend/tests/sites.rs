@@ -211,3 +211,196 @@ async fn host_lists_take_names_only() {
         .unwrap();
     assert!(b.hosts(env.site_id).await.unwrap()[0].approved);
 }
+
+const ACCOUNTS: &str = r#"
+import { Router, json, auth, db } from "sitewright";
+const app = new Router();
+app.post("/api/signup", async (req) => {
+  const { user, cookie } = await auth.signUp(await req.json());
+  return json({ user }, 201, { "set-cookie": cookie });
+});
+app.post("/api/signin", async (req) => {
+  const { user, cookie } = await auth.signIn(await req.json());
+  return json({ user }, 200, { "set-cookie": cookie });
+});
+app.post("/api/signout", async (req) => {
+  const { cookie } = await auth.signOut(req);
+  return json({ ok: true }, 200, { "set-cookie": cookie });
+});
+app.get("/api/me", async (req) => json({ user: await auth.user(req) }));
+app.get("/api/notes", async (req) => {
+  const user = await auth.requireUser(req);
+  return json(await db.query("select body from notes where user_id = ? order by id", user.id));
+});
+app.post("/api/notes", async (req) => {
+  const user = await auth.requireUser(req);
+  const { body } = await req.json();
+  await db.run("insert into notes (user_id, body) values (?, ?)", user.id, body);
+  return json({ ok: true }, 201);
+});
+export default app;
+"#;
+
+fn accounts() -> BackendSource {
+    BackendSource {
+        files: [("backend/index.js".to_owned(), ACCOUNTS.to_owned())].into(),
+        migrations: vec![sw_backend::Migration {
+            name: "0001_notes.sql".into(),
+            sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES sw_users (id), body TEXT NOT NULL);".into(),
+        }],
+    }
+}
+
+fn req(method: &str, path: &str, body: Value, cookie: Option<&str>) -> BackendRequest {
+    let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
+    if let Some(cookie) = cookie {
+        headers.push(("cookie".to_owned(), cookie.to_owned()));
+    }
+    BackendRequest {
+        method: method.into(),
+        path: path.into(),
+        query: String::new(),
+        headers,
+        body: if body.is_null() {
+            String::new()
+        } else {
+            body.to_string()
+        },
+    }
+}
+
+#[tokio::test]
+async fn visitors_sign_up_sign_in_and_see_only_their_own_data() {
+    let env = env().await;
+    let b = &env.backends;
+    let run = |r| async {
+        b.test_draft(env.site_id, &env.name, accounts(), r, false)
+            .await
+            .unwrap()
+    };
+    let cookie_of = |out: &sw_backend::DraftOutcome| {
+        let set = &out
+            .headers
+            .iter()
+            .find(|(k, _)| k == "set-cookie")
+            .unwrap()
+            .1;
+        set.split(';').next().unwrap().to_owned()
+    };
+
+    assert_eq!(
+        run(req("GET", "/api/notes", Value::Null, None))
+            .await
+            .status,
+        401
+    );
+    let ada = run(req(
+        "POST",
+        "/api/signup",
+        json!({"email": "ada@example.com", "password": "correct horse"}),
+        None,
+    ))
+    .await;
+    assert_eq!(ada.status, 201, "{ada:?}");
+    let ada_cookie = cookie_of(&ada);
+    assert!(ada_cookie.starts_with("__Host-sw_session="));
+    let bo = run(req(
+        "POST",
+        "/api/signup",
+        json!({"email": "bo@example.com", "password": "battery staple"}),
+        None,
+    ))
+    .await;
+    let bo_cookie = cookie_of(&bo);
+
+    // Visitor-facing errors arrive with their status and message.
+    let dup = run(req(
+        "POST",
+        "/api/signup",
+        json!({"email": "ADA@example.com", "password": "something else"}),
+        None,
+    ))
+    .await;
+    assert_eq!(dup.status, 409);
+    let weak = run(req(
+        "POST",
+        "/api/signup",
+        json!({"email": "c@example.com", "password": "x"}),
+        None,
+    ))
+    .await;
+    assert_eq!(
+        (weak.status, weak.body.contains("at least 8 characters")),
+        (400, true)
+    );
+    let wrong = run(req(
+        "POST",
+        "/api/signin",
+        json!({"email": "ada@example.com", "password": "nope nope"}),
+        None,
+    ))
+    .await;
+    assert_eq!(wrong.status, 401);
+
+    run(req(
+        "POST",
+        "/api/notes",
+        json!({"body": "ada's note"}),
+        Some(&ada_cookie),
+    ))
+    .await;
+    run(req(
+        "POST",
+        "/api/notes",
+        json!({"body": "bo's note"}),
+        Some(&bo_cookie),
+    ))
+    .await;
+    let mine = run(req("GET", "/api/notes", Value::Null, Some(&ada_cookie))).await;
+    assert_eq!(mine.body, r#"[{"body":"ada's note"}]"#);
+    let me: Value = serde_json::from_str(
+        &run(req("GET", "/api/me", Value::Null, Some(&bo_cookie)))
+            .await
+            .body,
+    )
+    .unwrap();
+    assert_eq!(me["user"]["email"], "bo@example.com");
+    assert!(me["user"].get("password_hash").is_none());
+    // A made-up cookie is nobody.
+    let forged = format!("__Host-sw_session={}", "a".repeat(64));
+    assert_eq!(
+        run(req("GET", "/api/notes", Value::Null, Some(&forged)))
+            .await
+            .status,
+        401
+    );
+
+    // Signing out ends that session only.
+    let out = run(req("POST", "/api/signout", Value::Null, Some(&ada_cookie))).await;
+    assert!(
+        out.headers
+            .iter()
+            .any(|(k, v)| k == "set-cookie" && v.contains("Max-Age=0"))
+    );
+    assert_eq!(
+        run(req("GET", "/api/notes", Value::Null, Some(&ada_cookie)))
+            .await
+            .status,
+        401
+    );
+    assert_eq!(
+        run(req("GET", "/api/notes", Value::Null, Some(&bo_cookie)))
+            .await
+            .status,
+        200
+    );
+    let back = run(req(
+        "POST",
+        "/api/signin",
+        json!({"email": "Ada@Example.com", "password": "correct horse"}),
+        None,
+    ))
+    .await;
+    assert_eq!(back.status, 200);
+    assert_ne!(cookie_of(&back), ada_cookie);
+}

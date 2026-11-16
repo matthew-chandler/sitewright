@@ -3870,6 +3870,7 @@ dependencies = [
 name = "sw-backend"
 version = "1.4.0"
 dependencies = [
+ "argon2",
  "futures-util",
  "getrandom 0.4.3",
  "libc",

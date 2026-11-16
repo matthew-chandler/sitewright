@@ -376,6 +376,10 @@ pub struct BackendsConfig {
     pub idle_secs: u64,
     /// Most worker processes alive at once, across all sites.
     pub max_workers: usize,
+    /// Set by the daemon from `domains.public_scheme`, not from the file: whether
+    /// visitor-session cookies are marked `Secure`.
+    #[serde(skip)]
+    pub secure_cookies: bool,
 }
 
 impl Default for BackendsConfig {
@@ -387,6 +391,7 @@ impl Default for BackendsConfig {
             max_db_mb: 100,
             idle_secs: 300,
             max_workers: 8,
+            secure_cookies: true,
         }
     }
 }

@@ -147,6 +147,7 @@ struct SiteHost {
     pool: sqlx::SqlitePool,
     secrets: SiteSecrets,
     egress: Egress,
+    auth: crate::auth::Auth,
     dbs: SiteDbs,
     logs: Mutex<HashMap<i64, VecDeque<LogLine>>>,
 }
@@ -311,6 +312,10 @@ impl Host for SiteHost {
                     }
                 }
                 "http.fetch" => self.fetch(target, args).await,
+                op if op.starts_with("auth.") => {
+                    let db = self.db(target).await?;
+                    self.auth.call(target.site_id, &db, op, &args).await
+                }
                 other => Err(format!("unknown operation {other}")),
             }
         })
@@ -405,6 +410,8 @@ impl SiteBackends {
         command: WorkerCommand,
         egress: Egress,
     ) -> Self {
+        // Cookies for visitor sessions are `Secure` exactly when sites are on HTTPS.
+        let secure = config.secure_cookies;
         let limits = Limits {
             request_timeout: Duration::from_secs(config.request_timeout_secs.max(1)),
             memory_bytes: config.memory_mb.max(8) * 1024 * 1024,
@@ -416,6 +423,7 @@ impl SiteBackends {
             secrets: SiteSecrets::new(data.site_secrets_file()),
             pool,
             egress,
+            auth: crate::auth::Auth::new(secure),
             data,
             dbs: SiteDbs::new(DbLimits {
                 max_bytes: config.max_db_mb.max(1) * 1024 * 1024,
