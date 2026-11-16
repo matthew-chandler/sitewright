@@ -53,6 +53,29 @@ impl AdminClient {
             .await
     }
 
+    /// GET a binary body (a file download).
+    pub async fn get_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
+        let response = self
+            .http
+            .get(Self::url(path))
+            .send()
+            .await
+            .map_err(|e| self.unreachable(e))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .context("cannot read the daemon's response")?;
+        if !status.is_success() {
+            let message = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
+                .unwrap_or_else(|| format!("the daemon answered {status}"));
+            bail!("{message}");
+        }
+        Ok(body.to_vec())
+    }
+
     /// Open a streaming GET (server-sent events). The caller reads the body.
     pub async fn stream(&self, path: &str) -> anyhow::Result<reqwest::Response> {
         let response = self

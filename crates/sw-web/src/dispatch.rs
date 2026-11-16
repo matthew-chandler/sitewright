@@ -41,6 +41,31 @@ async fn dispatch(
     // Domain checks: answered on every hostname, so a name can be verified before (and
     // regardless of whether) it belongs to a site.
     if let Some(token) = request.uri().path().strip_prefix(WELL_KNOWN_PREFIX) {
+        // A proxy that issues certificates on demand (Caddy's `ask`) checks here whether
+        // a hostname is ours: `?domain=<hostname>` answers 200 for the admin host and
+        // for hostnames that belong to a site, 404 for everything else.
+        if token == "tls-ask" {
+            let asked = request
+                .uri()
+                .query()
+                .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("domain=")))
+                .and_then(normalize_hostname);
+            let known = match asked {
+                Some(name) if name == *d.state.admin_host => true,
+                Some(name) => d
+                    .state
+                    .store
+                    .all_hostnames()
+                    .await
+                    .is_ok_and(|names| names.contains(&name)),
+                None => false,
+            };
+            return if known {
+                StatusCode::OK.into_response()
+            } else {
+                unknown_host()
+            };
+        }
         return match d.state.domains.answer(token) {
             Some(proof) => ([(header::CACHE_CONTROL, "no-store")], proof).into_response(),
             None => unknown_host(),

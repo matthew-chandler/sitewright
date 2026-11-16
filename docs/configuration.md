@@ -31,8 +31,8 @@ Unknown keys are rejected, so a typo is an error rather than a silently ignored 
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `mode` | `"proxy"` | `"proxy"`: behind nginx, Caddy or Cloudflare, which terminate TLS. `"standalone"`: the daemon binds 80/443 and gets its own certificates (arrives in M6). |
-| `listen` | `"127.0.0.1:8080"` | Plain-HTTP listen address. Overridden by `serve --listen` or `SITEWRIGHT_LISTEN`. |
+| `mode` | `"proxy"` | `"proxy"`: behind nginx, Caddy or Cloudflare, which terminate TLS. `"standalone"`: the daemon also serves HTTPS itself and gets certificates from Let's Encrypt; see `[tls]`. |
+| `listen` | `"127.0.0.1:8080"` | Plain-HTTP listen address. In standalone mode use `"0.0.0.0:80"`: it answers ACME challenges and redirects to HTTPS. Overridden by `serve --listen` or `SITEWRIGHT_LISTEN`. |
 | `trusted_proxies` | `[]` | CIDR ranges whose `X-Forwarded-For`, `X-Forwarded-Proto` and `CF-Connecting-IP` headers are believed. With nginx on the same machine: `["127.0.0.1/32"]`. Leave empty when clients connect directly. |
 
 ### `[domains]`
@@ -86,6 +86,30 @@ See [metrics.md](metrics.md) for what is collected.
 | `slow_ms` | `2000` | A check slower than this marks the site as degraded. |
 | `uptime_resolve_local` | `false` | Check sites through the daemon's own listener instead of public DNS. For local development, where `*.localhost` does not resolve for the daemon. |
 | `retention_days` | `30` | Days raw requests, events and checks are kept. Daily rollups are kept forever. |
+
+### `[tls]`
+
+Used in standalone mode. See [dns-and-tls.md](dns-and-tls.md#standalone-mode).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `https_listen` | `"0.0.0.0:443"` | HTTPS listen address. |
+| `acme_directory` | Let's Encrypt production | ACME directory URL. For testing: `https://acme-staging-v02.api.letsencrypt.org/directory`. |
+| `acme_contact` | none | Email address for the ACME account (expiry notices). |
+| `acme_root_cert` | none | PEM file with an extra root to trust for the ACME server itself. Only for test servers such as Pebble. |
+| `redirect_http` | `true` | Redirect plain HTTP to HTTPS. ACME challenges and `/.well-known/` are always answered. |
+| `include_admin_host` | `true` | Also get a certificate for the admin hostname. |
+| `precheck` | `true` | Before requesting a certificate, check that the hostname reaches this server over HTTP. |
+| `scan_interval_secs` | `30` | Seconds between scans for hostnames that need a certificate. |
+
+### `[updates]`
+
+See [operations.md](operations.md#updating).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `check` | `true` | Look for a newer release once a day and show it in Settings. |
+| `auto` | `false` | Install patch and minor releases automatically. A new major version is never installed automatically. |
 
 ## Secrets
 

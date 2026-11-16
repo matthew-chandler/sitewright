@@ -302,6 +302,16 @@ impl SiteStore {
             .collect())
     }
 
+    /// Every hostname of every active site, published or not: the names this server
+    /// answers for, and the only ones it may request certificates for.
+    pub async fn all_hostnames(&self) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar!(
+            "SELECT h.hostname FROM site_hostnames h JOIN sites s ON s.id = h.site_id WHERE s.status = 'active' ORDER BY h.hostname"
+        )
+        .fetch_all(&self.inner.db)
+        .await?)
+    }
+
     /// The site's releases, newest first.
     pub async fn releases(&self, site_id: i64, limit: i64) -> Result<Vec<Release>> {
         Ok(sqlx::query_as!(
@@ -892,6 +902,37 @@ impl SiteStore {
         self.audit(author, "site.rollback", name, Some(&release.sha))
             .await;
         Ok(release)
+    }
+
+    /// Build an archive of the site's live release in the exports directory.
+    pub async fn export(
+        &self,
+        name: &str,
+        format: crate::export::ExportFormat,
+    ) -> Result<crate::export::Export> {
+        let site = self.get(name).await?;
+        let current = site.current_release.ok_or_else(|| {
+            SiteError::Invalid(format!(
+                "site {name} has not been published yet, so there is nothing to export"
+            ))
+        })?;
+        let release = self.release(current).await?;
+        self.ensure_release_dir(&site.name, &release.sha).await?;
+        let release_dir = self.inner.data.site_release(&site.name, &release.sha);
+        let exports_dir = self.inner.data.exports_dir();
+        let name = name.to_owned();
+        let export = blocking(move || {
+            crate::export::build(&name, &release.sha, &release_dir, &exports_dir, format)
+        })
+        .await?;
+        self.audit(
+            Author::User,
+            "site.export",
+            site.name.as_str(),
+            Some(format.as_str()),
+        )
+        .await;
+        Ok(export)
     }
 
     // ------------------------------------------------------------------ deleting

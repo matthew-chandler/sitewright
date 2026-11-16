@@ -29,7 +29,7 @@ means instructions are loaded only when they are relevant.
 
 | `design-dashboard` | Look at what the site does, choose metrics that fit it, write and test a SQL query and a Vega-Lite chart per panel, save the dashboard. |
 
-`export-site` arrives with its tool in M6.
+| `export-site` | Pick the right export format (plain files or a Docker build context), build the archive, and explain how to use it. |
 
 Built-in skills live in [`skills/`](../skills) in the repository and are compiled into the
 binary. They update with the binary. CI validates each one with the reference validator

@@ -40,12 +40,38 @@ pub enum Command {
         #[arg(long, env = "SITEWRIGHT_LISTEN")]
         listen: Option<SocketAddr>,
     },
+    /// Write a starter configuration file.
+    Init(crate::setup::InitArgs),
+    /// Check the installation and report anything that needs attention.
+    Doctor,
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
     /// Administer the daemon.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// Download a site's live release as an archive.
+    Export {
+        site: String,
+        /// `folder`: the files, for any static host. `context`: a Docker build context.
+        #[arg(long, default_value = "folder")]
+        format: String,
+        /// Where to write the archive. Default: `<site>.tar.gz` or
+        /// `<site>-docker-context.tar.gz` in the current directory.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Update to the latest release, after verifying its signature. Keeps the previous
+    /// version for `--rollback`.
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+        /// Go back to the version that was running before the last update, including the
+        /// database as it was before that update's migrations.
+        #[arg(long, conflicts_with = "check")]
+        rollback: bool,
+    },
     /// Ask the agent to build or change a site.
     Prompt {
         /// Create the site in this run (the name must be free).
@@ -122,6 +148,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let daemon = crate::daemon::start(loaded, listen).await?;
             daemon.run_until_signal().await
         }
+        Command::Init(args) => crate::setup::init(&loaded, args),
+        Command::Doctor => crate::setup::doctor(&loaded).await,
         Command::Site(command) => site(&loaded, command).await,
         Command::Admin(AdminCommand::Invite) => {
             let client = AdminClient::new(&loaded.data_dir)?;
@@ -134,6 +162,34 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 "It works once and expires in {} minutes.",
                 invite["valid_minutes"]
             );
+            Ok(())
+        }
+        Command::Update { check, rollback } => crate::update::run(&loaded, check, rollback).await,
+        Command::Export {
+            site,
+            format,
+            output,
+        } => {
+            let client = AdminClient::new(&loaded.data_dir)?;
+            let bytes = client
+                .get_bytes(&format!("/v1/sites/{site}/export?format={format}"))
+                .await?;
+            let output = output.unwrap_or_else(|| {
+                PathBuf::from(if format == "context" {
+                    format!("{site}-docker-context.tar.gz")
+                } else {
+                    format!("{site}.tar.gz")
+                })
+            });
+            std::fs::write(&output, &bytes)
+                .with_context(|| format!("cannot write {}", output.display()))?;
+            println!("Wrote {} ({} bytes).", output.display(), bytes.len());
+            if format == "context" {
+                println!(
+                    "Build it with: tar -xzf {} && cd {site} && docker build -t {site} .",
+                    output.display()
+                );
+            }
             Ok(())
         }
         Command::Prompt {

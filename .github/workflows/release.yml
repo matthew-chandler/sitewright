@@ -1,0 +1,116 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds static binaries for both architectures, signs them with
+# minisign, and publishes a GitHub release with the notes from CHANGELOG.md.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag must match the workspace version
+        run: |
+          version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - run: cargo zigbuild --release --locked --target ${{ matrix.target }} -p sitewright
+      - name: Package
+        run: |
+          name="sitewright-${{ matrix.target }}"
+          mkdir -p "dist/$name/deploy"
+          cp "target/${{ matrix.target }}/release/sitewright" "dist/$name/"
+          cp README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          cp deploy/sitewright.service deploy/nginx.conf.example deploy/Caddyfile.example "dist/$name/deploy/"
+          file "dist/$name/sitewright" | tee /dev/stderr | grep -q 'statically linked'
+          # Fixed owner and order, so the archive depends only on its contents.
+          tar --sort=name --owner=0 --group=0 --numeric-owner -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sitewright-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Install minisign
+        run: |
+          curl -fsSL https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz | tar -xz
+          sudo install -m 0755 minisign-linux/x86_64/minisign /usr/local/bin/minisign
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          test -n "$MINISIGN_SECRET_KEY" || { echo "::error::The MINISIGN_SECRET_KEY secret is not set. Releases must be signed."; exit 1; }
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          for archive in dist/*.tar.gz; do
+            printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$archive" -x "$archive.minisig" \
+              -t "sitewright $GITHUB_REF_NAME $(basename "$archive")"
+            # Prove the signature verifies with the key compiled into the binary.
+            minisign -V -p release/minisign.pub -m "$archive" -x "$archive.minisig"
+          done
+          rm -f "$RUNNER_TEMP/minisign.key"
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## \[/ { printing = ($0 ~ "^## \\[" v "\\]") }
+            printing && !/^## \[/ { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md." > notes.md
+          {
+            echo
+            echo "## Verifying"
+            echo
+            echo "Every archive is signed with [minisign](https://jedisct1.github.io/minisign/). Public key:"
+            echo
+            echo '```'
+            tail -n 1 release/minisign.pub
+            echo '```'
+            echo
+            echo '`sitewright update` verifies the signature and the checksum before installing.'
+          } >> notes.md
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp scripts/install.sh dist/install.sh
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Sitewright $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

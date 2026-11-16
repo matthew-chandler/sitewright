@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
@@ -11,14 +11,14 @@ repository = "https://github.com/matthew-chandler/sitewright"
 authors = ["Matthew Chandler"]
 
 [workspace.dependencies]
-sw-core = { path = "crates/sw-core", version = "0.1.0" }
-sw-sites = { path = "crates/sw-sites", version = "0.1.0" }
-sw-agent = { path = "crates/sw-agent", version = "0.1.0" }
-sw-llm = { path = "crates/sw-llm", version = "0.1.0" }
-sw-web = { path = "crates/sw-web", version = "0.1.0" }
-sw-tls = { path = "crates/sw-tls", version = "0.1.0" }
-sw-metrics = { path = "crates/sw-metrics", version = "0.1.0" }
-sw-update = { path = "crates/sw-update", version = "0.1.0" }
+sw-core = { path = "crates/sw-core", version = "0.9.0" }
+sw-sites = { path = "crates/sw-sites", version = "0.9.0" }
+sw-agent = { path = "crates/sw-agent", version = "0.9.0" }
+sw-llm = { path = "crates/sw-llm", version = "0.9.0" }
+sw-web = { path = "crates/sw-web", version = "0.9.0" }
+sw-tls = { path = "crates/sw-tls", version = "0.9.0" }
+sw-metrics = { path = "crates/sw-metrics", version = "0.9.0" }
+sw-update = { path = "crates/sw-update", version = "0.9.0" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

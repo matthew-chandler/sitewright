@@ -6,6 +6,7 @@
 pub mod confine;
 pub mod domains;
 pub mod error;
+pub mod export;
 mod git;
 pub mod import;
 pub mod routes;
@@ -14,6 +15,7 @@ pub mod validate;
 
 pub use domains::{DomainCheck, DomainChecker};
 pub use error::{Result, SiteError};
+pub use export::{Export, ExportFormat};
 pub use import::ImportFile;
 pub use routes::{Route, RouteTable};
 pub use store::{

@@ -29,6 +29,15 @@ check "public: unknown host is 404 (needs nginx bootstrap)" "404" "$(curl -s -m 
 body="$(curl -s -m 10 "https://sitewright-dev.$ZONE/login" | grep -c '<h1>Sitewright</h1>')"
 check "public: admin sign-in page over HTTPS (needs a certificate for the admin host)" "1" "$body"
 
+# Standalone mode (M6): the daemon serves HTTPS itself on 18443 with a certificate for the
+# exact hostname, and gives unknown names no certificate at all.
+subject="$(echo | timeout 10 openssl s_client -connect "smoke.dev.$ZONE:18443" -servername "smoke.dev.$ZONE" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)"
+check "standalone: certificate for smoke.dev.$ZONE on port 18443" "subject=CN = smoke.dev.$ZONE" "$subject"
+code="$(curl -sk -m 10 -o /dev/null -w '%{http_code}' "https://smoke.dev.$ZONE:18443/")"
+check "standalone: site served over HTTPS on 18443" "200" "$code"
+unknown="$(echo | timeout 10 openssl s_client -connect "no-such-site.dev.$ZONE:18443" -servername "no-such-site.dev.$ZONE" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)"
+check "standalone: no certificate for an unknown hostname" "" "$unknown"
+
 # The sites wildcard must be DNS-only for standalone-mode TLS tests (M6).
 if getent ahostsv4 "anything.dev.$ZONE" | awk '{print $1}' | grep -qE '^(104\.|172\.6[4-9]\.|172\.7[01]\.)'; then
   echo "note  *.dev.$ZONE resolves to Cloudflare (proxied); M6 needs it DNS-only"

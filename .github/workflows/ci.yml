@@ -27,11 +27,21 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest,sqlx-cli
+      - name: Install Pebble (ACME test server)
+        run: |
+          for tool in pebble pebble-challtestsrv; do
+            curl -fsSL "https://github.com/letsencrypt/pebble/releases/download/v2.8.0/${tool}-linux-amd64.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+            sudo install -m 0755 "$(find "$RUNNER_TEMP" -type f -name "$tool" | head -1)" "/usr/local/bin/$tool"
+          done
+          pebble -version
       - run: cargo fmt --all --check
       - name: sqlx offline data is up to date
         run: ./scripts/sqlx-prepare.sh --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo nextest run --workspace --no-tests=warn
+        env:
+          # The ACME tests must really run here, not skip.
+          SW_REQUIRE_PEBBLE: "1"
 
   deny:
     name: cargo-deny

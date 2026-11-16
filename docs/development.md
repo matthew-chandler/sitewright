@@ -25,6 +25,25 @@ cargo deny check
 
 LLM credentials for live tests go in a git-ignored `.env` at the repo root.
 
+## ACME tests
+
+`crates/sw-tls/tests/pebble.rs` and `crates/sitewright/tests/standalone.rs` run against
+[Pebble](https://github.com/letsencrypt/pebble), Let's Encrypt's test server. They start
+`pebble` and `pebble-challtestsrv` themselves on free ports; `scripts/dev-setup.sh`
+installs both. Without the binaries the tests print a notice and pass; CI sets
+`SW_REQUIRE_PEBBLE=1` so they cannot be skipped there.
+
+## Releasing
+
+1. Move the `Unreleased` notes in `CHANGELOG.md` under a new `## [X.Y.Z] - date` heading.
+2. Set `version` in the workspace `Cargo.toml` (and the `sw-*` entries under
+   `[workspace.dependencies]`), run `cargo check` to update `Cargo.lock`, merge.
+3. Tag `vX.Y.Z` on `main` and push the tag. `release.yml` builds both architectures,
+   signs the archives with minisign and publishes the release with `install.sh`.
+
+The signing key's secret half lives in the repository secrets `MINISIGN_SECRET_KEY` and
+`MINISIGN_PASSWORD`; the public half is `release/minisign.pub`, compiled into the binary.
+
 ## The dev VPS loop
 
 The dev environment runs on a VPS as an unprivileged user (`devtest`), reached through the

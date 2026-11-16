@@ -343,3 +343,88 @@ async fn cli_reports_a_missing_daemon_clearly() {
     let err = sitewright::cli::run(cli).await.unwrap_err();
     assert!(err.to_string().contains("cannot reach the daemon"), "{err}");
 }
+
+#[tokio::test]
+async fn export_doctor_and_restart_work_through_the_cli() {
+    let t = boot().await;
+    let dir = t.site_dir(
+        "s",
+        &[
+            ("index.html", "<!doctype html><title>T</title>hello"),
+            ("css/a.css", "body{}"),
+        ],
+    );
+    t.cli(&["site", "import", "blog", path_str(&dir)])
+        .await
+        .unwrap();
+
+    // Export both formats to files.
+    let folder = t.dir.path().join("blog.tar.gz");
+    t.cli(&["export", "blog", "--output", path_str(&folder)])
+        .await
+        .unwrap();
+    let context = t.dir.path().join("ctx.tar.gz");
+    t.cli(&[
+        "export",
+        "blog",
+        "--format",
+        "context",
+        "-o",
+        path_str(&context),
+    ])
+    .await
+    .unwrap();
+    let names = |path: &std::path::Path| -> Vec<String> {
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+            std::fs::File::open(path).unwrap(),
+        ));
+        archive
+            .entries()
+            .unwrap()
+            .map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+            .collect()
+    };
+    assert_eq!(names(&folder), ["blog/css/a.css", "blog/index.html"]);
+    assert_eq!(
+        names(&context),
+        [
+            "blog/Dockerfile",
+            "blog/README.md",
+            "blog/site/css/a.css",
+            "blog/site/index.html"
+        ]
+    );
+    assert!(t.cli(&["export", "blog", "--format", "zip"]).await.is_err());
+    assert!(t.cli(&["export", "nope"]).await.is_err());
+    t.cli(&["site", "create", "empty"]).await.unwrap();
+    let err = t.cli(&["export", "empty"]).await.unwrap_err().to_string();
+    assert!(err.contains("not been published"), "{err}");
+
+    // Doctor reports on the running daemon; warnings (no passkey, no model) are not failures.
+    t.cli(&["doctor"]).await.unwrap();
+    let status: Value = t.admin().get("/v1/admin/status").await.unwrap();
+    assert_eq!(status["mode"], "proxy");
+    assert_eq!(status["passkeys"], 0);
+    assert_eq!(status["sites"].as_array().unwrap().len(), 2);
+    assert!(
+        status["certificates"].is_null(),
+        "no certificate manager in proxy mode"
+    );
+    // The status and restart endpoints exist only on the socket.
+    assert_eq!(t.get(ADMIN, "/api/v1/admin/status").await.status(), 401);
+
+    // A restart request makes the daemon's signal wait return (the supervisor restarts it).
+    let restart = t.daemon.state.restart.clone();
+    let waiting = tokio::spawn(async move { restart.notified().await });
+    let answer: Value = t
+        .admin()
+        .post("/v1/admin/restart", &serde_json::json!({}))
+        .await
+        .unwrap();
+    assert_eq!(answer["restarting"], true);
+    tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    t.daemon.shutdown().await;
+}

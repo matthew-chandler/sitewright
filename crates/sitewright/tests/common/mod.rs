@@ -31,17 +31,22 @@ pub async fn boot() -> TestDaemon {
 
 /// Boot with extra TOML appended to the test config.
 pub async fn boot_with(extra: &str) -> TestDaemon {
+    boot_with_listen(extra, "proxy", "127.0.0.1:0").await
+}
+
+/// Boot in the given mode, with the plain-HTTP listener on `listen`.
+pub async fn boot_with_listen(extra: &str, mode: &str, listen: &str) -> TestDaemon {
     sw_core::crypto::install_default_provider();
     let dir = tempfile::tempdir().unwrap();
     let toml = format!(
-        "[server]\ntrusted_proxies = [\"127.0.0.1/32\"]\n[domains]\nzones = [\"{ZONE}\"]\npublic_scheme = \"http\"\nadmin_url = \"{ORIGIN}\"\n{extra}"
+        "[server]\nmode = \"{mode}\"\ntrusted_proxies = [\"127.0.0.1/32\"]\n[domains]\nzones = [\"{ZONE}\"]\npublic_scheme = \"http\"\nadmin_url = \"{ORIGIN}\"\n{extra}"
     );
     let loaded = Loaded {
         config: Config::from_toml(&toml).unwrap(),
         data_dir: DataDir::new(dir.path().join("data")),
         source: None,
     };
-    let daemon = daemon::start(loaded, Some("127.0.0.1:0".parse().unwrap()))
+    let daemon = daemon::start(loaded, Some(listen.parse().unwrap()))
         .await
         .unwrap();
     let http = reqwest::Client::builder()

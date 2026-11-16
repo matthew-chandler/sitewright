@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::Context;
 use sw_agent::{Agent, Skills};
 use sw_core::DataDir;
-use sw_core::config::Loaded;
+use sw_core::config::{Loaded, ServeMode};
 use sw_metrics::uptime::{Target, UptimeOptions};
 use sw_metrics::{Metrics, RequestLog, VisitorHasher};
 use sw_sites::{DomainChecker, SiteStore};
@@ -21,8 +21,10 @@ use tokio_util::sync::CancellationToken;
 /// A running daemon. Dropping it does not stop it; call [`Daemon::shutdown`].
 #[derive(Debug)]
 pub struct Daemon {
-    /// The address the public listener is bound to.
+    /// The address the public (plain HTTP) listener is bound to.
     pub addr: SocketAddr,
+    /// The address the HTTPS listener is bound to, in standalone mode.
+    pub https_addr: Option<SocketAddr>,
     pub data: DataDir,
     pub state: AppState,
     cancel: CancellationToken,
@@ -48,12 +50,25 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         }
     }
 
+    // A rollback may have asked for the pre-migration database to be put back.
+    match sw_update::restore_database_if_requested(&data.backups_dir(), &data.db_file()) {
+        Ok(Some(backup)) => {
+            tracing::warn!(backup = %backup.display(), "restored the database from before the rolled-back update")
+        }
+        Ok(None) => {}
+        Err(error) => tracing::error!(%error, "could not restore the database after a rollback"),
+    }
     let db = sw_core::db::open(&data.db_file())
         .await
         .context("cannot open the database")?;
-    sw_core::db::migrate(&db, &data.backups_dir())
+    let migrated = sw_core::db::migrate(&db, &data.backups_dir())
         .await
         .context("cannot migrate the database")?;
+    if let Some(backup) = migrated
+        && let Err(error) = sw_update::record_migration(&data.backups_dir(), &backup)
+    {
+        tracing::warn!(%error, "could not record the pre-migration backup");
+    }
 
     let config = Arc::new(config);
     let store = SiteStore::open(db.clone(), data.clone(), &config)
@@ -94,6 +109,9 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         domains,
         providers,
         auth: Arc::new(auth),
+        tls: Arc::default(),
+        restart: Arc::default(),
+        update_available: Arc::default(),
     };
 
     let listen = listen.unwrap_or(config.server.listen);
@@ -106,15 +124,49 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         .await
         .with_context(|| format!("cannot bind admin socket {}", socket_path.display()))?;
 
-    install_health_check(&store, addr);
-
     let cancel = CancellationToken::new();
     let mut servers = Vec::new();
 
     let public = sw_web::public_router(state.clone());
+    install_health_check(&store, public.clone());
+    let mut https_addr = None;
+    let plain = if config.server.mode == ServeMode::Standalone {
+        // Standalone: terminate TLS here. The plain listener answers ACME challenges and
+        // (unless told otherwise) redirects everything else to HTTPS.
+        let challenges = sw_tls::Challenges::default();
+        let certs = sw_tls::CertStore::open(&data.certs_dir())
+            .context("cannot open the certificate store")?;
+        let https = TcpListener::bind(config.tls.https_listen)
+            .await
+            .with_context(|| format!("cannot listen on {} for HTTPS", config.tls.https_listen))?;
+        let bound = https.local_addr()?;
+        https_addr = Some(bound);
+        let tls_config = sw_tls::serve::server_config(certs.clone());
+        servers.push(tokio::spawn(sw_tls::serve::serve_https(
+            https,
+            tls_config,
+            public.clone(),
+            cancel.clone(),
+        )));
+        servers.push(tokio::spawn(run_certificates(
+            state.clone(),
+            data.clone(),
+            certs,
+            challenges.clone(),
+            cancel.clone(),
+        )));
+        let redirect_port = config
+            .tls
+            .redirect_http
+            .then(|| config.domains.public_port.unwrap_or(bound.port()));
+        tracing::info!(https = %bound, directory = %config.tls.acme_directory, "standalone mode: serving HTTPS");
+        sw_tls::serve::http_app(challenges, redirect_port, public)
+    } else {
+        public
+    };
     let token = cancel.clone();
     servers.push(tokio::spawn(async move {
-        let service = public.into_make_service_with_connect_info::<SocketAddr>();
+        let service = plain.into_make_service_with_connect_info::<SocketAddr>();
         if let Err(error) = axum::serve(listener, service)
             .with_graceful_shutdown(token.cancelled_owned())
             .await
@@ -147,6 +199,15 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
             }
         }
     }));
+
+    // Updates: look for a newer release daily; install it only if configured to.
+    if config.updates.check || config.updates.auto {
+        servers.push(tokio::spawn(watch_for_updates(
+            state.clone(),
+            config.updates.auto,
+            cancel.clone(),
+        )));
+    }
 
     // Metrics housekeeping: keep today's rollups fresh, prune old raw rows hourly.
     let token = cancel.clone();
@@ -211,12 +272,152 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     tracing::info!(%addr, admin_host = %state.admin_host, sites = state.store.routes().len(), "listening");
     Ok(Daemon {
         addr,
+        https_addr,
         data,
         state,
         cancel,
         servers,
         log_writer,
     })
+}
+
+/// Keep certificates in step with the served hostnames. Runs until cancelled. The ACME
+/// account is opened here, with retries, so a certificate authority that is unreachable
+/// at start-up delays certificates but never the daemon.
+async fn run_certificates(
+    state: AppState,
+    data: DataDir,
+    certs: sw_tls::CertStore,
+    challenges: sw_tls::Challenges,
+    cancel: CancellationToken,
+) {
+    let tls = state.config.tls.clone();
+    let account_file = data.acme_dir().join("account.json");
+    let acme = loop {
+        let opened = sw_tls::Acme::open(
+            &account_file,
+            &tls.acme_directory,
+            tls.acme_contact.as_deref(),
+            tls.acme_root_cert.as_ref(),
+            challenges.clone(),
+        );
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            result = opened => match result {
+                Ok(acme) => break acme,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot reach the ACME directory yet; retrying in a minute");
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                    }
+                }
+            },
+        }
+    };
+
+    // Before asking for a certificate, make sure the name really arrives here over HTTP.
+    let precheck: Option<sw_tls::manager::Precheck> = tls.precheck.then(|| {
+        let domains = state.domains.clone();
+        let check: sw_tls::manager::Precheck = Arc::new(move |hostname: String| {
+            let domains = domains.clone();
+            Box::pin(async move {
+                let result = domains.check(&hostname, 80).await;
+                if result.reaches_this_server {
+                    Ok(())
+                } else {
+                    Err(result.detail)
+                }
+            })
+        });
+        check
+    });
+    let options = sw_tls::ManagerOptions {
+        scan_interval: Duration::from_secs(tls.scan_interval_secs.max(1)),
+        precheck,
+        ..sw_tls::ManagerOptions::default()
+    };
+    let manager = sw_tls::Manager::new(acme, certs, options);
+    let _ = state.tls.set(manager.clone());
+
+    // Only names that belong to a site (and, if wanted, the admin host) get certificates.
+    let (store, admin_host, include_admin) = (
+        state.store.clone(),
+        state.admin_host.to_string(),
+        tls.include_admin_host,
+    );
+    let hostnames: sw_tls::manager::Hostnames = Arc::new(move || {
+        let (store, admin_host) = (store.clone(), admin_host.clone());
+        Box::pin(async move {
+            let mut names = store.all_hostnames().await.unwrap_or_default();
+            if include_admin && !names.contains(&admin_host) {
+                names.push(admin_host);
+            }
+            names
+        })
+    });
+    let _ = manager.spawn(hostnames, cancel).await;
+}
+
+/// Check for a newer release five minutes after start and then once a day. With `auto`,
+/// install patch and minor releases and ask for a restart.
+async fn watch_for_updates(state: AppState, auto: bool, cancel: CancellationToken) {
+    let mut wait = Duration::from_secs(300);
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            _ = tokio::time::sleep(wait) => {}
+        }
+        wait = Duration::from_secs(24 * 3600);
+        let Ok(current) = semver::Version::parse(sw_update::CURRENT_VERSION) else {
+            return;
+        };
+        let checked = async {
+            let updater = sw_update::Updater::official()?;
+            let Some(release) = updater.latest().await? else {
+                return Ok(None);
+            };
+            if !release.is_newer_than(&current) {
+                return Ok(None);
+            }
+            if auto && release.auto_installable_from(&current) {
+                let binary = updater.download_verified(&release).await?;
+                sw_update::install(&binary, &std::env::current_exe()?)?;
+                return Ok::<_, sw_update::UpdateError>(Some((release, true)));
+            }
+            Ok(Some((release, false)))
+        }
+        .await;
+        match checked {
+            Ok(Some((release, true))) => {
+                tracing::info!(version = %release.version, "installed an update; restarting");
+                sw_core::db::audit(
+                    state.store.db(),
+                    "system",
+                    "update.install",
+                    Some(&release.version.to_string()),
+                    None,
+                )
+                .await;
+                state.restart.notify_one();
+                return;
+            }
+            Ok(Some((release, false))) => {
+                tracing::info!(version = %release.version, "a newer release is available");
+                *state
+                    .update_available
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(release.version.to_string());
+            }
+            Ok(None) => {
+                *state
+                    .update_available
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None
+            }
+            Err(error) => tracing::warn!(%error, "update check failed"),
+        }
+    }
 }
 
 /// The address to reach our own listener at.
@@ -228,35 +429,40 @@ fn loopback(addr: SocketAddr) -> SocketAddr {
     }
 }
 
-/// After each publish, fetch the site's front page through the daemon's own listener,
-/// exactly as a proxy would. A release that cannot be served is rolled back.
-fn install_health_check(store: &SiteStore, addr: SocketAddr) {
-    let target = loopback(addr);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .no_proxy()
-        .build();
-    let Ok(client) = client else { return };
-    store.set_health_check(Arc::new(move |route, hostname| {
-        let client = client.clone();
+/// After each publish, request the site's front page from the same application that
+/// serves visitors, exactly as a proxy would present it. A release that cannot be served
+/// is rolled back. The request goes straight into the router rather than over the
+/// network, so it works the same in proxy and standalone mode.
+fn install_health_check(store: &SiteStore, app: axum::Router) {
+    use tower::ServiceExt;
+    store.set_health_check(Arc::new(move |_route, hostname| {
+        let app = app.clone();
         Box::pin(async move {
-            let response = client
-                .get(format!("http://{target}/"))
+            let mut request = axum::http::Request::builder()
+                .uri("/")
                 .header("host", &hostname)
                 .header(
                     "user-agent",
                     concat!("sitewright-healthcheck/", env!("CARGO_PKG_VERSION")),
                 )
-                .send()
+                .body(axum::body::Body::empty())
+                .map_err(|e| format!("could not build the health check request: {e}"))?;
+            let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(local));
+            let response = tokio::time::timeout(Duration::from_secs(5), app.oneshot(request))
                 .await
-                .map_err(|e| format!("could not fetch the front page of {hostname}: {e}"))?;
+                .map_err(|_| {
+                    format!("the front page of {hostname} did not answer within 5 seconds")
+                })?
+                .unwrap_or_else(|never| match never {});
             if !response.status().is_success() {
                 return Err(format!(
                     "the front page of {hostname} returned {}",
                     response.status()
                 ));
             }
-            let _ = route;
             Ok(())
         })
     }));
@@ -273,14 +479,16 @@ impl Daemon {
             state, log_writer, ..
         } = self;
         let db = state.store.db().clone();
-        // The log writer stops once every handle to it is gone.
-        drop(state);
-        if tokio::time::timeout(Duration::from_secs(5), log_writer)
+        // Write out what is queued, then stop the writer. (Waiting for every handle to
+        // drop is not an option: the publish health check keeps the application alive.)
+        if tokio::time::timeout(Duration::from_secs(5), state.request_log.flush())
             .await
             .is_err()
         {
             tracing::warn!("request log did not flush in time");
         }
+        log_writer.abort();
+        drop(state);
         db.close().await;
     }
 
@@ -288,9 +496,11 @@ impl Daemon {
     pub async fn run_until_signal(self) -> anyhow::Result<()> {
         use tokio::signal::unix::{SignalKind, signal};
         let mut term = signal(SignalKind::terminate())?;
+        let restart = self.state.restart.clone();
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
+            _ = restart.notified() => tracing::info!("restart requested"),
         }
         tracing::info!("shutting down");
         self.shutdown().await;

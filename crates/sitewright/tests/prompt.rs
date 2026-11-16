@@ -116,7 +116,7 @@ async fn prompt_new_builds_a_site_and_a_follow_up_edits_it() {
             .unwrap()
             .contains("Sitewright's site builder")
     );
-    assert_eq!(sent["tools"].as_array().unwrap().len(), 17);
+    assert_eq!(sent["tools"].as_array().unwrap().len(), 18);
     t.daemon.shutdown().await;
 }
 
@@ -177,6 +177,34 @@ async fn domain_check_tokens_are_answered_on_any_host() {
     // An unknown token is a 404 like any other unknown path.
     assert_eq!(
         t.get("whatever.example.org", "/.well-known/sitewright/nope")
+            .await
+            .status(),
+        404
+    );
+
+    // The on-demand TLS question a proxy may ask: only our hostnames get a yes.
+    let dir = t.site_dir("s", &[("index.html", "hi")]);
+    t.cli(&["site", "import", "hikes", common::path_str(&dir)])
+        .await
+        .unwrap();
+    for (domain, expected) in [
+        ("hikes.sites.test", 200),
+        ("admin.sites.test", 200),
+        ("evil.sites.test", 404),
+        ("example.org", 404),
+        ("", 404),
+    ] {
+        let status = t
+            .get(
+                "127.0.0.1",
+                &format!("/.well-known/sitewright/tls-ask?domain={domain}"),
+            )
+            .await
+            .status();
+        assert_eq!(status, expected, "{domain}");
+    }
+    assert_eq!(
+        t.get("127.0.0.1", "/.well-known/sitewright/tls-ask")
             .await
             .status(),
         404

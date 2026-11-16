@@ -1,0 +1,32 @@
+# Caddy in front of Sitewright (proxy mode). Sitewright listens on 127.0.0.1:8080 and
+# routes by the Host header.
+#
+# In config.toml:
+#   [server]
+#   mode = "proxy"
+#   listen = "127.0.0.1:8080"
+#   trusted_proxies = ["127.0.0.1/32"]
+#   [domains]
+#   zones = ["example.com"]
+#   public_scheme = "https"
+#
+# Caddy gets a certificate per hostname on demand. The `ask` endpoint makes it check with
+# Sitewright first, so certificates are only issued for the admin host and real sites.
+# (If you would rather not run a second web server at all, use Sitewright's standalone
+# mode, which does the same thing built in.)
+
+{
+    on_demand_tls {
+        ask http://127.0.0.1:8080/.well-known/sitewright/tls-ask
+    }
+}
+
+https:// {
+    tls {
+        on_demand
+    }
+    # Server-sent events (live agent progress) are streamed, not buffered.
+    reverse_proxy 127.0.0.1:8080 {
+        flush_interval -1
+    }
+}

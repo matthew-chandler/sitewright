@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
         .route("/v1/sites/{name}/check-domain", get(check_domain))
+        .route("/v1/sites/{name}/export", get(export_site))
         .route("/v1/runs", get(list_runs).post(start_run))
         .route("/v1/runs/{id}", get(get_run))
         .route("/v1/runs/{id}/events", get(run_events))
@@ -49,6 +50,8 @@ pub fn router(state: AppState) -> Router {
 pub fn socket_router(state: AppState) -> Router {
     let local = Router::new()
         .route("/v1/admin/invite", post(create_invite))
+        .route("/v1/admin/restart", post(restart))
+        .route("/v1/admin/status", get(status))
         .with_state(state.clone());
     router(state).merge(local)
 }
@@ -61,6 +64,53 @@ async fn create_invite(State(state): State<AppState>) -> ApiResult<Json<Value>> 
         "url": format!("{}/enroll/{token}", state.admin_origin),
         "valid_minutes": crate::auth::INVITE_MINUTES,
     })))
+}
+
+/// Ask the daemon to shut down cleanly; its supervisor (systemd, `Restart=always`)
+/// starts it again with whatever binary is now on disk. Socket only.
+async fn restart(State(state): State<AppState>) -> Json<Value> {
+    sw_core::db::audit(state.store.db(), "cli", "daemon.restart", None, None).await;
+    state.restart.notify_one();
+    Json(json!({ "restarting": true }))
+}
+
+/// Everything `sitewright doctor` wants to know from the running daemon. Socket only.
+async fn status(State(state): State<AppState>) -> Json<Value> {
+    let providers: Vec<Value> = state
+        .providers
+        .list()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| json!({ "id": p.config.id, "kind": p.config.kind.as_str(), "model": p.config.model, "has_key": p.has_key, "needs_key": p.config.key_ref.is_some(), "default": p.is_default }))
+        .collect();
+    let sites = state.store.list(false).await.unwrap_or_default();
+    let health = sw_metrics::uptime::health(&state.metrics.db, state.metrics.slow_ms)
+        .await
+        .unwrap_or_default();
+    let site_rows: Vec<Value> = sites
+        .iter()
+        .map(|s| {
+            json!({
+                "name": s.name.as_str(),
+                "published": s.current_release.is_some(),
+                "status": health.get(&s.id).map_or("unknown", |h| h.status.as_str()),
+            })
+        })
+        .collect();
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "mode": if state.config.server.mode == sw_core::config::ServeMode::Standalone { "standalone" } else { "proxy" },
+        "admin_origin": &*state.admin_origin,
+        "zones": state.config.domains.zones,
+        "passkeys": state.auth.list_passkeys().await.map(|p| p.len()).unwrap_or(0),
+        "providers": providers,
+        "sites": site_rows,
+        "certificates": state.tls.get().map(|m| m.status()),
+        "update_available": state.update_available.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        "spent_today_usd": state.agent.spent_today().await.unwrap_or(0.0),
+        "daily_cap_usd": state.config.agent.daily_spend_cap_usd,
+    }))
 }
 
 async fn health(State(state): State<AppState>) -> Json<Value> {
@@ -352,4 +402,48 @@ pub fn run_event_stream(
             return Some((Ok(sse), s));
         }
     })
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportQuery {
+    format: Option<String>,
+}
+
+/// Download an archive of a site's live release.
+async fn export_site(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<ExportQuery>,
+) -> ApiResult<axum::response::Response> {
+    let format = sw_sites::ExportFormat::parse(q.format.as_deref().unwrap_or("folder"))?;
+    export_response(&state, &name, format).await
+}
+
+/// Build an export and return it as a file download.
+pub async fn export_response(
+    state: &AppState,
+    name: &str,
+    format: sw_sites::ExportFormat,
+) -> ApiResult<axum::response::Response> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let export = state.store.export(name, format).await?;
+    let bytes = tokio::fs::read(&export.path).await.map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the export could not be read",
+        )
+    })?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/gzip".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", export.file_name),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        bytes,
+    )
+        .into_response())
 }

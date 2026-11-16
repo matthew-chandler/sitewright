@@ -89,6 +89,23 @@
   </form>
 </section>
 
+{% if mode == "standalone" %}
+<section>
+  <h2>Certificates</h2>
+  {% if tls.is_empty() %}
+  <p class="empty">No hostnames yet, or the certificate manager is still starting.</p>
+  {% else %}
+  <ul class="list">
+    {% for host in tls %}
+    <li><div><span class="dot {% if host.ok %}up{% else %}degraded{% endif %}" aria-hidden="true"></span> <strong>{{ host.hostname }}</strong><br>
+      <span class="muted">{{ host.detail }}</span></div></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="hint">Certificates are requested only for hostnames that belong to a site, and renewed when a third of their lifetime remains.</p>
+</section>
+{% endif %}
+
 <section>
   <h2>Passkeys</h2>
   <ul class="list">
@@ -142,6 +159,9 @@
 <section>
   <h2>About</h2>
   <p class="muted">Sitewright {{ version }}</p>
+  {% if !update_available.is_empty() %}
+  <p class="msg ok">Version {{ update_available }} is available. On the server, run <code>sitewright update</code>.</p>
+  {% endif %}
   <button type="button" hx-post="/logout">Sign out</button>
 </section>
 {% endblock %}
