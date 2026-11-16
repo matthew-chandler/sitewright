@@ -3,44 +3,22 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M6 built; v0.9.0 and v1.0.0 releases wait on Needs #1)_
+_Last updated: 2026-11-16 (v1.0.0 released; all milestones done)_
 
 ## Needs from Matthew
 
-1. **Store the release signing key as GitHub Actions secrets** (plan input #6). The key
-   pair was generated on your WSL machine, outside the repository, in
-   `~/.config/sitewright-release/` (`minisign.key`, `minisign.password`, `minisign.pub`).
-   Claude Code's permission system did not let the agent set repository secrets, so:
+Nothing blocks. Optional:
 
-   ```sh
-   cd ~/projects/sitewright
-   gh secret set MINISIGN_SECRET_KEY < ~/.config/sitewright-release/minisign.key
-   gh secret set MINISIGN_PASSWORD   < ~/.config/sitewright-release/minisign.password
-   ```
-
-   Then **copy that directory somewhere offline** (a password manager or a USB stick):
-   whoever holds `minisign.key` and its password can sign updates every installation will
-   accept. The public half is already in the repository (`release/minisign.pub`).
-
-2. **Publish the releases** (after #1). Either tell the agent to continue, or:
-
-   ```sh
-   git checkout main && git pull
-   git tag v0.9.0 && git push origin v0.9.0      # release.yml builds, signs, publishes
-   ```
-
-   What remains after that is the last M6 acceptance step: install v0.9.0 on the VPS, bump
-   the version to 1.0.0 (one small PR), tag `v1.0.0`, and run `sitewright update` and
-   `sitewright update --rollback` on the VPS. The steps are under "Finishing v1.0.0" below.
-
-3. **Optional: screenshots or a GIF** of the phone flow for the README. The agent has no
-   browser to capture them.
-
-4. **Optional: `.claude/settings.json`.** The exact contents are in
+1. **Keep an offline copy of the release signing key**: `~/.config/sitewright-release/`
+   on the WSL machine (`minisign.key`, `minisign.password`). Whoever holds both can sign
+   updates that every installation accepts.
+2. **Screenshots or a GIF** of the phone flow for the README; the agent has no browser.
+3. **`.claude/settings.json`**: contents in
    [development.md](development.md#claude-code-permissions).
-
-Done by Matthew: nginx bootstrap, `*.dev` DNS-only, certbot for the admin host, the admin
-record set to DNS only, and the full phone checklist (2026-11-15).
+4. **Turn Cloudflare's proxy back on** for `sitewright-dev` if you want it; it returned
+   error 525 while proxied even with a valid origin certificate. Re-running the updated
+   `scripts/vps-bootstrap.sh` aligns that nginx block's TLS settings with your other sites;
+   if 525 persists, `sudo tail -n 5 /var/log/nginx/error.log` names the cause.
 
 ## Milestones
 
@@ -120,27 +98,33 @@ record set to DNS only, and the full phone checklist (2026-11-15).
   **Verified on the VPS:** in standalone mode three site hosts got Let's Encrypt staging
   certificates and are served on port 18443; an unknown hostname gets no certificate.
 
+- **Releases:** v0.9.0 and v1.0.0 were built, signed and published by `release.yml`
+  (two architectures, each archive with `.sha256` and `.minisig`, plus `install.sh`).
+- **Self-update acceptance on the VPS (2026-11-16):** the published 0.9.0 binary ran
+  `sitewright update`, verified the signature and checksum, installed 1.0.0 and the
+  service came back as 1.0.0; `update --rollback` returned it to 0.9.0; a second `update`
+  returned it to 1.0.0. `doctor` was clean after every step and the sites stayed up.
+
 ## In progress
 
-- Nothing. Waiting on Needs #1 to publish v0.9.0.
+- Nothing. v1 is complete.
 
-## Finishing v1.0.0
+## Not done, by choice or by circumstance
 
-Once the signing secrets exist:
+- **Docker build of an exported context** was not run: Docker is not installed in WSL.
+  The archive layout and digest-pinned Dockerfile are covered by tests.
+- **Production Let's Encrypt certificates** were not requested; the plan allows them on at
+  most 5 dev hostnames. Standalone mode was accepted with staging certificates. To try
+  production: remove `acme_directory` from `[tls]` in the VPS config and restart.
+- **Anthropic and Gemini** are verified by mock-server fixtures only; no keys were given.
+- **README screenshots** are missing.
 
-1. `git tag v0.9.0 && git push origin v0.9.0`; wait for the Release workflow; check the
-   release has two archives, each with `.sha256` and `.minisig`, and `install.sh`.
-2. On the VPS as devtest, install that release's binary over `~/bin/sitewright`
-   (download the x86_64 archive, verify, extract) and restart the user service.
-3. Bump the workspace version to `1.0.0`, add a `## [1.0.0]` section to `CHANGELOG.md`,
-   merge, `git tag v1.0.0 && git push origin v1.0.0`.
-4. On the VPS: `~/bin/sitewright --data-dir ~/sitewright-data update` (expect "Signature
-   and checksum verified", then the service restarts as 1.0.0), `... doctor`, then
-   `... update --rollback` (back to 0.9.0) and `... update` again.
-5. Per the plan, production Let's Encrypt certificates may be tried on at most 5 dev
-   hostnames: remove `acme_directory` from `[tls]` in the VPS config, restart, and check.
-6. Docker is not installed in WSL, so building an exported context was not run; the
-   archive layout and the digest-pinned Dockerfile are covered by tests.
+## Ideas for after v1
+
+From the plan's "not in v1" list: DNS provider APIs (a `DnsProvider` trait), publishing
+to other hosts, sites with backends, multiple users. Smaller follow-ups: bump GitHub
+Actions that still target Node 20, drop `cargo-dist` from `dev-setup.sh` (ADR-0005), move
+to a `libsqlite3-sys` that clears RUSTSEC-2026-0459 once sqlx allows it.
 
 ## Decisions worth knowing (beyond the ADRs)
 
