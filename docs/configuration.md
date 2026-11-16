@@ -41,6 +41,7 @@ Unknown keys are rejected, so a typo is an error rather than a silently ignored 
 | --- | --- | --- |
 | `zones` | `["localhost"]` | DNS zones sites live under. A new site's hostname is `<name>.<first zone>`. |
 | `admin_host` | `admin.<first zone>` (`localhost` for the `localhost` zone) | Hostname of the admin UI. Its first label is reserved and cannot be used as a site name. |
+| `reserved_names` | `[]` | Extra site names that may not be used, besides the built-in `admin`, `www`, `api`, `mail` and the admin host's label. List the subdomains of the zone that other services already use. |
 | `admin_url` | built from `public_scheme`, `admin_host` and `public_port` | Full origin of the admin UI, for example `https://admin.example.com`. Set it when the admin UI's scheme or port differs from the sites'. Passkeys are bound to this origin, so changing it later means enrolling again. |
 | `public_scheme` | `"http"` | `"http"` or `"https"`: how visitors reach sites. Used to build links. |
 | `public_port` | none | Public port when it is not the scheme's default, for example `8080` in local development. |

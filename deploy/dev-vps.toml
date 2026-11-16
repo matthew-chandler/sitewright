@@ -1,25 +1,18 @@
-# Configuration for the dev VPS (devtest user). Copied to ~/sitewright-data/config.toml by
-# scripts/deploy-dev.sh on first deploy; later edits on the server are never overwritten.
+# Configuration of the VPS instance (devtest user). Copied to ~/sitewright-data/config.toml
+# by scripts/deploy-dev.sh on first deploy; later edits on the server are never overwritten.
+# LLM settings are appended by scripts/dev-secrets.sh.
 
 [server]
-mode = "standalone"
+mode = "proxy"
 listen = "127.0.0.1:18080"
 # nginx on the same machine forwards requests and sets X-Forwarded-For.
 trusted_proxies = ["127.0.0.1/32"]
 
 [domains]
-zones = ["dev.machandler.com"]
-admin_host = "sitewright-dev.machandler.com"
-# The admin UI is reached over HTTPS through Cloudflare; passkeys are bound to this origin.
-admin_url = "https://sitewright-dev.machandler.com"
-# Sites under *.dev are plain HTTP: Cloudflare's free certificate does not cover
-# second-level subdomains.
-public_scheme = "http"
-
-# Standalone-mode TLS test: HTTPS on 18443 with Let's Encrypt *staging* certificates,
-# while nginx keeps forwarding port 80 (sites over HTTP and ACME challenges) to 18080.
-[tls]
-https_listen = "0.0.0.0:18443"
-acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
-redirect_http = false
-include_admin_host = false
+zones = ["machandler.com"]
+admin_host = "sitewright.machandler.com"
+admin_url = "https://sitewright.machandler.com"
+# Subdomains of machandler.com that other services on this server already use.
+reserved_names = ["api", "cps", "erp", "fireworks", "league", "l", "population", "sun", "uuixd", "dev", "sitewright-dev"]
+# Cloudflare terminates TLS for *.machandler.com.
+public_scheme = "https"

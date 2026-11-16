@@ -29,6 +29,18 @@ pub async fn open(path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Start a transaction that will write.
+///
+/// SQLite's default transaction takes the write lock only at its first write. If the
+/// transaction has read first and another connection commits in between, that upgrade
+/// fails at once with "database is locked", and the busy timeout does not apply. `BEGIN
+/// IMMEDIATE` takes the write lock up front, where the busy timeout does make it wait.
+pub async fn begin_write(
+    pool: &SqlitePool,
+) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, sqlx::Error> {
+    pool.begin_with("BEGIN IMMEDIATE").await
+}
+
 /// Open an in-memory database with all migrations applied. For tests.
 pub async fn open_in_memory() -> Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str("sqlite::memory:")?.foreign_keys(true);
@@ -111,6 +123,40 @@ async fn applied_versions(pool: &SqlitePool) -> Result<Vec<i64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_read_then_write_transactions_wait_instead_of_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("t.db")).await.unwrap();
+        migrate(&pool, &dir.path().join("backups")).await.unwrap();
+        // Many tasks each read, then write, in one transaction. With deferred
+        // transactions some of these fail with "database is locked".
+        let tasks: Vec<_> = (0..40)
+            .map(|i| {
+                let pool = pool.clone();
+                tokio::spawn(async move {
+                    let mut tx = begin_write(&pool).await?;
+                    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM settings")
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    sqlx::query("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, 0)")
+                        .bind(format!("k{i}"))
+                        .bind(n.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                    tx.commit().await
+                })
+            })
+            .collect();
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM settings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 40);
+    }
 
     #[tokio::test]
     async fn migrates_fresh_database_without_backup() {

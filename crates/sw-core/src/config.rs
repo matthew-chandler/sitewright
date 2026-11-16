@@ -81,6 +81,10 @@ pub struct DomainsConfig {
     pub zones: Vec<String>,
     /// Hostname of the admin UI. Default: `admin.<zones[0]>` (`localhost` for local dev).
     pub admin_host: Option<String>,
+    /// Extra site names that may not be used, on top of the built-in ones (`admin`,
+    /// `www`, `api`, `mail`) and the admin host's label. List the subdomains of your
+    /// zone that other services already use, so a site can never be created over them.
+    pub reserved_names: Vec<String>,
     /// Full origin of the admin UI, for example `https://admin.example.com`. Needed when
     /// it differs from `public_scheme` + `admin_host` (+ `public_port`). Passkeys are
     /// bound to this origin.
@@ -96,6 +100,7 @@ impl Default for DomainsConfig {
         Self {
             zones: vec!["localhost".to_owned()],
             admin_host: None,
+            reserved_names: Vec::new(),
             admin_url: None,
             public_scheme: Scheme::Http,
             public_port: None,
@@ -133,6 +138,16 @@ impl DomainsConfig {
             None if self.default_zone() == "localhost" => "localhost".to_owned(),
             None => format!("admin.{}", self.default_zone()),
         }
+    }
+
+    /// Whether `name` may not be used for a site: a built-in reserved name, the admin
+    /// host's label, or one of `reserved_names`.
+    pub fn is_reserved(&self, name: &SiteName) -> bool {
+        name.is_reserved(&self.admin_host())
+            || self
+                .reserved_names
+                .iter()
+                .any(|r| r.eq_ignore_ascii_case(name.as_str()))
     }
 
     /// The admin UI's origin, without a trailing slash.
@@ -730,6 +745,19 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn configured_names_are_reserved_alongside_the_built_in_ones() {
+        let config = Config::from_toml(
+            "[domains]\nzones = [\"example.com\"]\nadmin_host = \"panel.example.com\"\nreserved_names = [\"shop\", \"Legacy\"]",
+        )
+        .unwrap();
+        let reserved = |name: &str| config.domains.is_reserved(&SiteName::parse(name).unwrap());
+        for name in ["shop", "legacy", "panel", "www", "api", "admin", "mail"] {
+            assert!(reserved(name), "{name}");
+        }
+        assert!(!reserved("hikes"));
     }
 
     #[test]

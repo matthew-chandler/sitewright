@@ -223,7 +223,7 @@ impl Agent {
                     ),
                 }));
             }
-            (None, true) if name.is_reserved(&inner.store.domains().admin_host()) => {
+            (None, true) if inner.store.domains().is_reserved(&name) => {
                 return Err(AgentError::Invalid(format!("the name {name} is reserved")));
             }
             (None, false) => return Err(AgentError::Site(SiteError::NotFound(name.to_string()))),

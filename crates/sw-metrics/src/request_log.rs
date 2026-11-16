@@ -130,7 +130,7 @@ async fn write_batch(db: &SqlitePool, batch: &mut Vec<RequestRecord>) {
         return;
     }
     let result: Result<(), sqlx::Error> = async {
-        let mut tx = db.begin().await?;
+        let mut tx = sw_core::db::begin_write(db).await?;
         for r in batch.iter() {
             let (status, bytes, duration) = (i64::from(r.status), r.bytes as i64, r.duration_ms as i64);
             let ua_class = r.ua_class.as_str();

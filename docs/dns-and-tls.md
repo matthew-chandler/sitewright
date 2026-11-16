@@ -12,6 +12,30 @@ front (proxy mode) or by Sitewright itself with Let's Encrypt (standalone mode).
   reserved and cannot be a site name; so are `admin`, `www`, `api` and `mail`.
 - A request for any other hostname gets a plain 404, and never a certificate.
 
+### Sharing a zone with other services
+
+Sitewright can live on a zone where other subdomains are already in use (`api.example.com`
+run by something else). Two things keep them apart:
+
+- In nginx, an exact `server_name` always wins over the wildcard block that forwards to
+  Sitewright, so existing server blocks keep answering for their names.
+  [`scripts/vps-production.sh`](../scripts/vps-production.sh) adds such a wildcard block
+  next to existing sites without touching them.
+- List those names under `domains.reserved_names`, so nobody (including the agent) can
+  create a site called `api`.
+
+### Extra and custom hostnames
+
+```sh
+sitewright site hostname add hikes www.janes-hikes.com            # serve it there too
+sitewright site hostname add hikes hikes.example.org --primary    # and make that the main address
+sitewright site hostname remove hikes hikes.old-zone.example      # stop serving an extra one
+```
+
+The primary hostname is the one links, uptime checks and the admin UI use. Promoting a
+hostname keeps the previous primary attached, so old links keep working until you remove
+it.
+
 ## Three ways to point names at the server
 
 | Option | Record | Trade-off |
