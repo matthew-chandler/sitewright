@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-16
+
+The first stable release. It contains everything in 0.9.0, which was published as a
+release candidate, and was reached from 0.9.0 with `sitewright update` on a live server.
+
+### Changed
+
+- Release signatures made by the `minisign` command-line tool are covered by a test, as is
+  the agreement between the public key compiled into the binary and the one printed in
+  the README and the installer.
+
+### Notes for people installing for the first time
+
+- Start with [docs/install.md](docs/install.md).
+- The honest limits of v1 are listed in the [README](README.md#honest-limits-of-v1):
+  static sites only, one admin, Linux hosts, manual DNS.
+
 ## [0.9.0] - 2026-11-15
 
 The first public release: everything planned for v1, published as a release candidate so
@@ -40,5 +57,6 @@ that the update path to 1.0.0 can be exercised on a real server.
   systemd unit, and export of any site as plain files or a Docker build context.
 - A CLI for every core operation over an owner-only Unix socket.
 
-[Unreleased]: https://github.com/matthew-chandler/sitewright/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/matthew-chandler/sitewright/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/matthew-chandler/sitewright/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/matthew-chandler/sitewright/releases/tag/v0.9.0
