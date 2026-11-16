@@ -321,7 +321,7 @@ impl Auth {
             ));
         }
         let now = now_ms();
-        let mut tx = self.db.begin().await?;
+        let mut tx = sw_core::db::begin_write(&self.db).await?;
         if let RegistrationGrant::Invite(invite_id) = pending.grant {
             // Claim the invite atomically: two enrollments cannot share one link.
             let claimed = sqlx::query!("UPDATE invites SET used_at = ?1 WHERE id = ?2 AND used_at IS NULL AND expires_at > ?1", now, invite_id)

@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
   sites without modifying them.
 - Documentation for moving to another domain.
 
+### Fixed
+
+- Rare "database is locked" errors when two things wrote at the same moment (for example
+  a publish while the request log was flushing). Write transactions now take SQLite's
+  write lock at their start, where the busy timeout applies.
+
 ## [1.0.0] - 2026-11-16
 
 The first stable release. It contains everything in 0.9.0, which was published as a

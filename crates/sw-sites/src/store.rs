@@ -375,7 +375,7 @@ impl SiteStore {
         }
 
         let now = now_ms();
-        let mut tx = self.inner.db.begin().await?;
+        let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
         let taken = sqlx::query_scalar!(
             r#"SELECT count(*) as "n!: i64" FROM site_hostnames WHERE hostname = ?1"#,
             hostname
@@ -461,7 +461,7 @@ impl SiteStore {
             if attached == 0 {
                 Box::pin(self.add_hostname_as(name, &host, false, author)).await?;
             }
-            let mut tx = self.inner.db.begin().await?;
+            let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
             sqlx::query!(
                 "UPDATE site_hostnames SET is_primary = 0 WHERE site_id = ?1",
                 site.id
@@ -806,7 +806,7 @@ impl SiteStore {
 
         let now = now_ms();
         let author_str = author.as_str();
-        let mut tx = self.inner.db.begin().await?;
+        let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
         let release_id = sqlx::query_scalar!(
             r#"INSERT INTO releases (site_id, sha, message, author, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
                ON CONFLICT (site_id, sha) DO UPDATE SET sha = excluded.sha
@@ -1048,7 +1048,7 @@ impl SiteStore {
                 Err(e) => Err(e.into()),
             })
             .await?;
-            let mut tx = self.inner.db.begin().await?;
+            let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
             sqlx::query!(
                 "UPDATE sites SET current_release = NULL WHERE id = ?1",
                 row.id
