@@ -3909,6 +3909,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sw-image"
+version = "1.6.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sw-llm"
 version = "1.6.0"
 dependencies = [
