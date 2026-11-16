@@ -286,3 +286,76 @@ fn a_rollback_restores_the_database_from_before_the_migration() {
         None
     );
 }
+
+/// The release workflow signs with the `minisign` command-line tool, not with the Rust
+/// crate the other tests use. Check that a signature made by the real tool verifies.
+/// Skipped when `minisign` is not installed.
+#[test]
+fn signatures_made_by_the_minisign_cli_verify() {
+    let installed = std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| dir.join("minisign").is_file())
+    });
+    if !installed {
+        eprintln!("skipping: minisign is not on PATH");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = |name: &str| dir.path().join(name);
+    let run = |args: &[&str]| {
+        let output = std::process::Command::new("minisign")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "minisign {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let archive = archive(&fake_binary("signed by the cli"));
+    std::fs::write(path("a.tar.gz"), &archive).unwrap();
+    run(&["-G", "-W", "-f", "-p", "key.pub", "-s", "key.sec"]);
+    run(&[
+        "-S",
+        "-s",
+        "key.sec",
+        "-m",
+        "a.tar.gz",
+        "-x",
+        "a.tar.gz.minisig",
+        "-t",
+        "sitewright test",
+    ]);
+
+    let public_key = std::fs::read_to_string(path("key.pub")).unwrap();
+    let signature = std::fs::read_to_string(path("a.tar.gz.minisig")).unwrap();
+    let checksum = format!("{}  a.tar.gz\n", hex::encode(Sha256::digest(&archive)));
+    sw_update::verify(&archive, &signature, &checksum, &public_key).unwrap();
+
+    // The bare base64 key (as printed in the README) works too, and tampering is caught.
+    let bare = public_key.lines().last().unwrap();
+    sw_update::verify(&archive, &signature, &checksum, bare).unwrap();
+    let mut tampered = archive.clone();
+    tampered[100] ^= 1;
+    assert!(sw_update::verify(&tampered, &signature, &checksum, &public_key).is_err());
+    assert!(
+        sw_update::verify(&archive, &signature, &checksum, sw_update::PUBLIC_KEY).is_err(),
+        "signed by a different key"
+    );
+}
+
+/// The key compiled into the binary is the one in the README and the installer.
+#[test]
+fn the_compiled_in_key_matches_the_published_one() {
+    let key = sw_update::PUBLIC_KEY.lines().last().unwrap().trim();
+    assert!(key.starts_with("RW") && key.len() == 56, "{key}");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for file in ["README.md", "scripts/install.sh", "docs/install.md"] {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        assert!(
+            text.contains(key),
+            "{file} does not show the current release key"
+        );
+    }
+}
