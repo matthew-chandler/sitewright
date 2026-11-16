@@ -3,35 +3,27 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M6 built; v0.9.0 and v1.0.0 releases wait on Needs #1)_
+_Last updated: 2026-11-15 (M6 merged; v0.9.0 waits for the tag push, Needs #2)_
 
 ## Needs from Matthew
 
-1. **Store the release signing key as GitHub Actions secrets** (plan input #6). The key
-   pair was generated on your WSL machine, outside the repository, in
-   `~/.config/sitewright-release/` (`minisign.key`, `minisign.password`, `minisign.pub`).
-   Claude Code's permission system did not let the agent set repository secrets, so:
+1. *(done)* The release signing secrets are set (`MINISIGN_SECRET_KEY`,
+   `MINISIGN_PASSWORD`). Keep an offline copy of `~/.config/sitewright-release/`.
+
+2. **Push the release tag.** Claude Code's permission system does not let the agent push
+   a release tag, so this one is yours:
 
    ```sh
    cd ~/projects/sitewright
-   gh secret set MINISIGN_SECRET_KEY < ~/.config/sitewright-release/minisign.key
-   gh secret set MINISIGN_PASSWORD   < ~/.config/sitewright-release/minisign.password
+   git fetch origin
+   git tag -a v0.9.0 -m "Sitewright 0.9.0" a698a91     # main at the time of writing; version 0.9.0
+   git push origin v0.9.0
    ```
 
-   Then **copy that directory somewhere offline** (a password manager or a USB stick):
-   whoever holds `minisign.key` and its password can sign updates every installation will
-   accept. The public half is already in the repository (`release/minisign.pub`).
-
-2. **Publish the releases** (after #1). Either tell the agent to continue, or:
-
-   ```sh
-   git checkout main && git pull
-   git tag v0.9.0 && git push origin v0.9.0      # release.yml builds, signs, publishes
-   ```
-
-   What remains after that is the last M6 acceptance step: install v0.9.0 on the VPS, bump
-   the version to 1.0.0 (one small PR), tag `v1.0.0`, and run `sitewright update` and
-   `sitewright update --rollback` on the VPS. The steps are under "Finishing v1.0.0" below.
+   `release.yml` then builds both architectures, signs them and publishes the release
+   (about ten minutes). Tell the agent when it is done, or follow "Finishing v1.0.0"
+   below. To let the agent do tags itself, allow `Bash(git push origin v*)` in your
+   Claude Code settings.
 
 3. **Optional: screenshots or a GIF** of the phone flow for the README. The agent has no
    browser to capture them.
@@ -52,7 +44,7 @@ record set to DNS only, and the full phone checklist (2026-11-15).
 | M3 Web UI and passkeys | done; phone checklist passed 2026-11-15 |
 | M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
 | M5 Metrics and dashboards | done |
-| M6 Standalone TLS, updates, export, v1.0.0 | built; releases wait on the signing secrets (Needs #1, #2) |
+| M6 Standalone TLS, updates, export, v1.0.0 | merged; the v0.9.0 and v1.0.0 tags wait on Needs #2 |
 
 ## Done
 
@@ -122,13 +114,15 @@ record set to DNS only, and the full phone checklist (2026-11-15).
 
 ## In progress
 
-- Nothing. Waiting on Needs #1 to publish v0.9.0.
+- Nothing. Waiting on Needs #2 (the tag push) to publish v0.9.0.
 
 ## Finishing v1.0.0
 
-Once the signing secrets exist:
+The release was rehearsed locally: both architectures build, the archive is packaged as
+`release.yml` does it, signed with the real key, and the signature verifies against the
+key compiled into the binary.
 
-1. `git tag v0.9.0 && git push origin v0.9.0`; wait for the Release workflow; check the
+1. Push the `v0.9.0` tag (Needs #2); wait for the Release workflow; check the
    release has two archives, each with `.sha256` and `.minisig`, and `install.sh`.
 2. On the VPS as devtest, install that release's binary over `~/bin/sitewright`
    (download the x86_64 archive, verify, extract) and restart the user service.
