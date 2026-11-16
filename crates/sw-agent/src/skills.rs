@@ -418,7 +418,7 @@ mod tests {
             skills
                 .load("nope")
                 .unwrap_err()
-                .contains("available skills: create-site")
+                .contains("available skills: build-backend, create-site")
         );
         assert!(skills.read_file("create-site", "missing.md").is_err());
     }

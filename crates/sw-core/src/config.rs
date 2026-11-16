@@ -25,6 +25,7 @@ pub struct Config {
     pub llm: LlmConfig,
     pub agent: AgentConfig,
     pub metrics: MetricsConfig,
+    pub backends: BackendsConfig,
     pub tls: TlsConfig,
     pub updates: UpdatesConfig,
 }
@@ -355,6 +356,38 @@ impl ModelPrice {
     pub fn cost(&self, input_tokens: u64, output_tokens: u64) -> f64 {
         (input_tokens as f64 * self.input_per_mtok + output_tokens as f64 * self.output_per_mtok)
             / 1_000_000.0
+    }
+}
+
+/// Site backends: agent-written JavaScript that answers a site's `/api/*` requests in a
+/// jailed worker process (ADR-0006).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct BackendsConfig {
+    /// Turn backends off entirely: `/api/*` is then served like any other path.
+    pub enabled: bool,
+    /// Longest a handler may run, in seconds.
+    pub request_timeout_secs: u64,
+    /// JavaScript memory per site, in megabytes.
+    pub memory_mb: u64,
+    /// Largest a site's database may grow, in megabytes.
+    pub max_db_mb: u64,
+    /// Seconds without requests after which a site's worker is stopped.
+    pub idle_secs: u64,
+    /// Most worker processes alive at once, across all sites.
+    pub max_workers: usize,
+}
+
+impl Default for BackendsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_timeout_secs: 10,
+            memory_mb: 64,
+            max_db_mb: 100,
+            idle_secs: 300,
+            max_workers: 8,
+        }
     }
 }
 

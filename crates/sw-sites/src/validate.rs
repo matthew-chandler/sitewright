@@ -115,10 +115,21 @@ pub fn validate(root: &Path, limits: &SitesConfig) -> std::io::Result<Report> {
             );
         }
         if let Err(crate::SiteError::Path { reason, .. }) =
-            confine::clean_rel_path(&file.rel, &limits.allowed_extensions)
+            confine::clean_site_path(&file.rel, &limits.allowed_extensions)
         {
             report.push(Severity::Error, &file.rel, reason);
         }
+    }
+
+    // A backend needs its entry point.
+    if files.iter().any(|f| confine::is_backend_path(&f.rel))
+        && !files.iter().any(|f| f.rel == "backend/index.js")
+    {
+        report.push(
+            Severity::Error,
+            "backend/index.js",
+            "the site has backend files but no backend/index.js, the backend's entry point",
+        );
     }
 
     let size_of = |rel: &str| files.iter().find(|f| f.rel == rel).map_or(0, |f| f.size);

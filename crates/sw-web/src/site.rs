@@ -43,7 +43,15 @@ pub async fn serve(
     let referrer_host = header_str(request.headers(), "referer").and_then(referrer_host);
     let ip = client_ip(&state.config.server, peer, request.headers());
 
-    let mut response = if method == Method::GET || method == Method::HEAD {
+    let visitor_hash = state.hasher.hash(ip, &user_agent, route.site_id);
+
+    let is_api = path == "/api" || path.starts_with("/api/");
+    let mut response = if sw_sites::confine::is_backend_path(path.trim_start_matches('/')) {
+        // Backend source and migrations are part of the release but never served.
+        StatusCode::NOT_FOUND.into_response()
+    } else if is_api && route.backend && state.backend.enabled() {
+        backend_response(state, &route, request, &visitor_hash).await
+    } else if method == Method::GET || method == Method::HEAD {
         serve_file(&route.root, request).await
     } else {
         (
@@ -68,8 +76,139 @@ pub async fn serve(
         duration_ms: started.elapsed().as_millis() as u64,
         referrer_host,
         ua_class: classify_user_agent(&user_agent),
-        visitor_hash: state.hasher.hash(ip, &user_agent, route.site_id),
+        visitor_hash,
     });
+    response
+}
+
+/// Request headers a backend never sees: connection management, and anything that
+/// identifies the visitor's address. Backends get the same daily-rotating visitor hash
+/// the metrics use instead.
+fn hidden_from_backend(name: &str) -> bool {
+    matches!(
+        name,
+        "connection"
+            | "keep-alive"
+            | "transfer-encoding"
+            | "te"
+            | "upgrade"
+            | "content-length"
+            | "forwarded"
+            | "x-real-ip"
+            | "true-client-ip"
+            | "cf-connecting-ip"
+            | "cf-connecting-ipv6"
+            | "x-sitewright-visitor"
+    ) || name.starts_with("x-forwarded-")
+        || name.starts_with("proxy-")
+}
+
+fn backend_error(status: StatusCode, message: &str) -> Response {
+    (
+        status,
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        format!("{{\"error\":\"{message}\"}}"),
+    )
+        .into_response()
+}
+
+/// Hand an `/api/*` request to the site's backend.
+async fn backend_response(
+    state: &AppState,
+    route: &Route,
+    request: Request,
+    visitor: &str,
+) -> Response {
+    use sw_backend::{BackendError, BackendRequest};
+
+    let (parts, body) = request.into_parts();
+    let limit = state.backend.limits().max_request_body;
+    let Ok(bytes) = axum::body::to_bytes(body, limit).await else {
+        return backend_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "the request body is too large",
+        );
+    };
+    let Ok(body) = String::from_utf8(bytes.to_vec()) else {
+        return backend_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "the request body must be UTF-8 text",
+        );
+    };
+    let mut headers: Vec<(String, String)> = parts
+        .headers
+        .iter()
+        .filter(|(name, _)| !hidden_from_backend(name.as_str()))
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
+        })
+        .collect();
+    headers.push(("x-sitewright-visitor".into(), visitor.to_owned()));
+    let head = parts.method == Method::HEAD;
+    let backend_request = BackendRequest {
+        method: parts.method.as_str().to_owned(),
+        path: parts.uri.path().to_owned(),
+        query: parts.uri.query().unwrap_or("").to_owned(),
+        headers,
+        body,
+    };
+    let answer = state
+        .backend
+        .serve(
+            route.site_id,
+            &route.site,
+            &route.sha,
+            &route.root,
+            backend_request,
+        )
+        .await;
+    let answer = match answer {
+        Ok(answer) => answer,
+        Err(BackendError::Timeout) => {
+            return backend_error(StatusCode::GATEWAY_TIMEOUT, "the backend took too long");
+        }
+        Err(BackendError::Busy) => {
+            let mut response =
+                backend_error(StatusCode::SERVICE_UNAVAILABLE, "the backend is busy");
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            return response;
+        }
+        Err(BackendError::TooLarge) => {
+            return backend_error(StatusCode::BAD_GATEWAY, "the backend's answer is too large");
+        }
+        Err(error) => {
+            tracing::warn!(site = %route.site, %error, "backend request failed");
+            return backend_error(StatusCode::INTERNAL_SERVER_ERROR, "backend error");
+        }
+    };
+    let mut response = Response::new(Body::from(if head { String::new() } else { answer.body }));
+    *response.status_mut() =
+        StatusCode::from_u16(answer.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    for (name, value) in answer.headers {
+        if matches!(
+            name.as_str(),
+            "content-length" | "transfer-encoding" | "connection" | "keep-alive" | "upgrade"
+        ) {
+            continue;
+        }
+        if let (Ok(name), Ok(value)) = (
+            header::HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().append(name, value);
+        }
+    }
+    // Answers are per request unless the backend says otherwise.
+    if !response.headers().contains_key(header::CACHE_CONTROL) {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     response
 }
 
@@ -231,7 +370,10 @@ fn apply_headers(headers: &mut HeaderMap) {
     } else {
         "public, max-age=300, must-revalidate"
     };
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    // A backend's own choice (or its "no-store" default) stands.
+    if !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    }
 }
 
 /// The hostname of a `Referer` URL, if it has one.

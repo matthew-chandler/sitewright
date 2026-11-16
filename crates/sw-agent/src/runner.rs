@@ -138,6 +138,7 @@ struct Inner {
     domains: DomainChecker,
     skills: Skills,
     metrics: Metrics,
+    backends: std::sync::OnceLock<sw_backend::SiteBackends>,
     config: Arc<Config>,
     providers: Arc<dyn ProviderSource>,
     active: Mutex<HashMap<i64, Active>>,
@@ -188,6 +189,7 @@ impl Agent {
                 domains,
                 skills,
                 metrics,
+                backends: std::sync::OnceLock::new(),
                 config,
                 providers,
                 active: Mutex::new(HashMap::new()),
@@ -403,6 +405,11 @@ impl Agent {
         Ok(spent_today(&self.inner.db).await?)
     }
 
+    /// Give the agent access to site backends (the backend tools). Can be set once.
+    pub fn set_backends(&self, backends: sw_backend::SiteBackends) {
+        let _ = self.inner.backends.set(backends);
+    }
+
     /// Whether a site has a run in progress.
     pub fn is_busy(&self, site: &str) -> bool {
         lock(&self.inner.busy_sites).contains(site)
@@ -481,6 +488,7 @@ impl Job {
             domains: self.inner.domains.clone(),
             skills: self.inner.skills.clone(),
             metrics: self.inner.metrics.clone(),
+            backends: self.inner.backends.get().cloned(),
             site: self.site.clone(),
             may_create: self.may_create,
             http_port: self

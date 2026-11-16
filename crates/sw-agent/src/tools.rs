@@ -17,12 +17,18 @@ pub struct ToolContext {
     pub domains: DomainChecker,
     pub skills: crate::skills::Skills,
     pub metrics: sw_metrics::Metrics,
+    /// Site backends, when the server has them.
+    pub backends: Option<sw_backend::SiteBackends>,
     /// The site this run is bound to.
     pub site: String,
     /// Whether the run was started to create `site` (so `create_site` is allowed).
     pub may_create: bool,
     /// Public HTTP port used by `check_domain`.
     pub http_port: u16,
+}
+
+fn no_backends() -> ToolOutcome {
+    ToolOutcome::error("backends are not available on this server")
 }
 
 /// The outcome of one tool call.
@@ -177,6 +183,33 @@ pub fn definitions() -> Vec<ToolDef> {
                 json!({ "spec": { "type": "object", "description": "The dashboard: {\"version\": 1, \"panels\": [...]}. See metrics_schema." } }),
                 &["spec"],
             ),
+        ),
+        def(
+            "test_backend",
+            "Send one HTTP request to this site's UNPUBLISHED backend (the files under backend/ in the working tree) and return the response and console output. It runs against a private copy of the site's database with the working tree's migrations applied, so nothing live changes. The copy is kept between calls until the backend's files change.",
+            schema(
+                json!({
+                    "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+                    "path": { "type": "string", "description": "Path and optional query, for example /api/entries?limit=5" },
+                    "body": { "type": "string", "description": "Request body as text. JSON by default." },
+                    "content_type": { "type": "string", "description": "Default application/json. Use application/x-www-form-urlencoded to test a form post." },
+                    "reset": { "type": "boolean", "description": "Start again from a fresh copy of the live data." },
+                }),
+                &["method", "path"],
+            ),
+        ),
+        def(
+            "backend_logs",
+            "Recent console output (console.log, errors with stack traces) of this site's backend, live and draft, oldest first.",
+            schema(
+                json!({ "limit": { "type": "integer", "description": "How many lines, 1 to 200. Default 50." } }),
+                &[],
+            ),
+        ),
+        def(
+            "backend_schema",
+            "The tables, indexes and views of this site's LIVE database, as CREATE statements, and its size. Empty until a backend with migrations has been published.",
+            none(),
         ),
         def(
             "load_skill",
@@ -347,6 +380,65 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                     "download": format!("the Export buttons on the site page, or `sitewright export {} --format {}`", ctx.site, format.as_str()),
                 }))
             }
+            "test_backend" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let method = required("method")?.to_ascii_uppercase();
+                let target = required("path")?;
+                if !target.starts_with("/api") {
+                    return Err(ToolOutcome::error("backends answer paths under /api/ only"));
+                }
+                let (path, query) = target.split_once('?').unwrap_or((target, ""));
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let root = ctx.store.working_tree(&ctx.site).await.map_err(fail)?;
+                let source = tokio::task::spawn_blocking(move || sw_backend::BackendSource::read(&root))
+                    .await
+                    .map_err(|e| ToolOutcome::error(e.to_string()))?
+                    .map_err(ToolOutcome::error)?
+                    .ok_or_else(|| ToolOutcome::error("this site has no backend/index.js yet; write it first"))?;
+                let body = text("body").unwrap_or("").to_owned();
+                let mut headers = vec![("x-sitewright-visitor".to_owned(), "test-visitor".to_owned())];
+                if !body.is_empty() {
+                    headers.push((
+                        "content-type".to_owned(),
+                        text("content_type").unwrap_or("application/json").to_owned(),
+                    ));
+                }
+                let request = sw_backend::BackendRequest {
+                    method,
+                    path: path.to_owned(),
+                    query: query.to_owned(),
+                    headers,
+                    body,
+                };
+                let reset = args.get("reset").and_then(Value::as_bool).unwrap_or(false);
+                let outcome = backends
+                    .test_draft(site.id, &site.name, source, request, reset)
+                    .await
+                    .map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({
+                    "status": outcome.status,
+                    "headers": outcome.headers,
+                    "body": crate::events::shorten(&outcome.body),
+                    "console": outcome.logs.iter().map(|l| format!("[{}] {}", l.level, l.message)).collect::<Vec<_>>(),
+                    "migrations_applied": outcome.migrations_applied,
+                }))
+            }
+            "backend_logs" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200) as usize;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                ToolOutcome::ok(json!({ "lines": backends.logs(site.id, limit) }))
+            }
+            "backend_schema" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let schema = backends.schema(&site.name).await.map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({
+                    "objects": schema,
+                    "database_bytes": backends.database_size(&site.name),
+                    "note": "This is the published database. Migrations in the working tree apply when you publish; test_backend applies them to a private copy.",
+                }))
+            }
             "metrics_schema" => ToolOutcome::ok(sw_metrics::dashboard::metrics_schema()),
             "run_readonly_query" => {
                 let sql = required("sql")?;
@@ -437,6 +529,9 @@ mod tests {
                 "metrics_schema",
                 "run_readonly_query",
                 "save_dashboard",
+                "test_backend",
+                "backend_logs",
+                "backend_schema",
                 "load_skill",
                 "read_skill_file",
                 "check_domain"

@@ -37,6 +37,7 @@ pub async fn boot_with(extra: &str) -> TestDaemon {
 /// Boot in the given mode, with the plain-HTTP listener on `listen`.
 pub async fn boot_with_listen(extra: &str, mode: &str, listen: &str) -> TestDaemon {
     sw_core::crypto::install_default_provider();
+    sitewright::daemon::set_worker_program(env!("CARGO_BIN_EXE_sitewright").into());
     let dir = tempfile::tempdir().unwrap();
     let toml = format!(
         "[server]\nmode = \"{mode}\"\ntrusted_proxies = [\"127.0.0.1/32\"]\n[domains]\nzones = [\"{ZONE}\"]\npublic_scheme = \"http\"\nadmin_url = \"{ORIGIN}\"\n{extra}"

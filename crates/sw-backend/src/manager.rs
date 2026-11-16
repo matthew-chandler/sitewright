@@ -324,6 +324,15 @@ impl Backends {
         }
     }
 
+    /// Check that a backend's code loads, in a worker that is then discarded.
+    pub async fn check(
+        &self,
+        target: &Target,
+        files: BTreeMap<String, String>,
+    ) -> Result<(), BackendError> {
+        self.start(target, files).await.map(|_| ())
+    }
+
     /// Start a worker and load the backend into it.
     async fn start(
         &self,
@@ -475,5 +484,56 @@ impl Backends {
             .values()
             .filter(|slot| slot.worker.try_lock().map_or(true, |g| g.is_some()))
             .count()
+    }
+}
+
+struct NoHost;
+
+impl Host for NoHost {
+    fn call<'a>(
+        &'a self,
+        _target: &'a Target,
+        op: &'a str,
+        _args: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'a>> {
+        Box::pin(async move { Err(format!("unknown operation {op}")) })
+    }
+
+    fn log(&self, _target: &Target, _level: &str, _message: &str) {}
+}
+
+/// Start a worker, run a trivial backend in it and stop it again: a check that this
+/// system can run backends at all (the worker starts, and its jail can be installed).
+pub async fn self_test(command: WorkerCommand) -> Result<(), BackendError> {
+    let backends = Backends::new(command, Limits::default(), Arc::new(NoHost));
+    let target = Target {
+        site_id: 0,
+        site: "self-test".into(),
+        version: "self-test".into(),
+        draft: true,
+    };
+    let files = BTreeMap::from([(
+        crate::worker::ENTRY.to_owned(),
+        "import { text } from 'sitewright'; export default () => text('ok');".to_owned(),
+    )]);
+    let response = backends
+        .handle(
+            &target,
+            move || Ok(files),
+            BackendRequest {
+                method: "GET".into(),
+                path: "/api/self-test".into(),
+                query: String::new(),
+                headers: Vec::new(),
+                body: String::new(),
+            },
+        )
+        .await?;
+    if response.body == "ok" {
+        Ok(())
+    } else {
+        Err(BackendError::Failed(
+            "unexpected answer from the worker".into(),
+        ))
     }
 }

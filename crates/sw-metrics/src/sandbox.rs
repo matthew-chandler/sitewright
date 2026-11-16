@@ -254,9 +254,16 @@ async fn collect(conn: &mut SqliteConnection, sql: &str) -> Result<QueryResult, 
 fn row_to_json(row: &SqliteRow) -> Value {
     let mut object = serde_json::Map::new();
     for (i, column) in row.columns().iter().enumerate() {
+        // A NULL in a typed column reports the column's type, so ask the value itself.
         let kind = row
             .try_get_raw(i)
-            .map(|v| v.type_info().name().to_owned())
+            .map(|v| {
+                if v.is_null() {
+                    "NULL".to_owned()
+                } else {
+                    v.type_info().name().to_owned()
+                }
+            })
             .unwrap_or_default();
         let value = match kind.as_str() {
             "INTEGER" | "BOOLEAN" => row

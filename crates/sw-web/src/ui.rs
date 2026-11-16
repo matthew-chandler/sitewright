@@ -276,6 +276,28 @@ struct ReleaseRow {
     changes: String,
 }
 
+struct BackendLogRow {
+    when: String,
+    level: String,
+    message: String,
+    draft: bool,
+}
+
+/// What the site page shows about a site's backend.
+struct BackendView {
+    /// Size of the site's database, for example "48 KB"; empty when there is none.
+    database: String,
+    logs: Vec<BackendLogRow>,
+}
+
+fn human_bytes(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1024 * 1024 => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
+        b if b >= 1024 => format!("{} KB", b / 1024),
+        b => format!("{b} bytes"),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "site.html")]
 struct SitePage {
@@ -287,6 +309,7 @@ struct SitePage {
     busy: bool,
     /// The run in progress on this site, if any.
     running_run: Option<i64>,
+    backend: Option<BackendView>,
     zone: String,
     /// Hostnames other than the primary one, with a note for those that redirect.
     other_hostnames: Vec<String>,
@@ -555,8 +578,34 @@ async fn site_page(
             }
         })
         .collect();
+    let has_backend = state
+        .store
+        .routes()
+        .sites()
+        .iter()
+        .any(|route| route.site_id == info.site.id && route.backend);
+    let backend = has_backend.then(|| BackendView {
+        database: state
+            .backend
+            .database_size(&info.site.name)
+            .map(human_bytes)
+            .unwrap_or_default(),
+        logs: state
+            .backend
+            .logs(info.site.id, 30)
+            .into_iter()
+            .rev()
+            .map(|line| BackendLogRow {
+                when: ago(line.ts),
+                level: line.level,
+                message: line.message,
+                draft: line.draft,
+            })
+            .collect(),
+    });
     render(SitePage {
         chrome,
+        backend,
         running_run,
         zone: state.config.domains.default_zone().to_owned(),
         other_hostnames,
@@ -634,7 +683,10 @@ async fn site_delete(
         return error_fragment("a run is in progress on this site; wait for it or cancel it first");
     }
     match state.store.delete(&name, Author::User).await {
-        Ok(_) => hx_redirect("/"),
+        Ok(site) => {
+            state.backend.release(site.id, &site.name).await;
+            hx_redirect("/")
+        }
         Err(e) => error_fragment(e.to_string()),
     }
 }
@@ -661,6 +713,10 @@ async fn site_rename(
     let renaming = new_name != name;
     if renaming && state.agent.is_busy(&name) {
         return error_fragment("a run is in progress on this site; wait for it or cancel it first");
+    }
+    if renaming {
+        // The backend's worker and database connection must let go of the directory.
+        state.backend.release(site.id, &site.name).await;
     }
     // Rename first: it is the step that can be refused.
     if renaming

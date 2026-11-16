@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting on the nginx block)_
+_Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx block for the domain move)_
 
 ## Needs from Matthew
 
@@ -42,17 +42,18 @@ _Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting o
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish 1.1.0** (`main` is at 1.1.0; the VPS runs a build of it):
-   `git tag -a v1.1.0 -m "Sitewright 1.1.0" && git push origin v1.1.0`.
+4. **Optional: publish a release.** `main` is at 1.4.0 and nothing after 1.0.0 is tagged.
+   `git tag -a v1.4.0 -m "Sitewright 1.4.0" && git push origin v1.4.0` publishes it; the
+   VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
    screenshots, `.claude/settings.json`.
 
-3. **Check release 1.2 on your phone** (it is running on the VPS, reachable once #1 is
+6. **Check release 1.2 on your phone** (it is running on the VPS, reachable once #1 is
    done): the run page clock and "Back to site", Markdown in agent messages, Ctrl+Enter
    with a keyboard, and "Name and address" on a site's page.
 
-4. **GitHub Copilot (roadmap 1.3) needs two things from you before I can build it.**
+7. **GitHub Copilot (roadmap 1.3) needs two things from you before I can build it.**
    What I found (2026-11-16):
    - GitHub Models, the simple hosted API, was retired on 2026-07-30, so that is out.
    - Calling Copilot's chat API directly is officially supported only for specific
@@ -187,13 +188,15 @@ _Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting o
 - Waiting on Needs #1 to finish the move to `*.machandler.com`.
 - Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
   - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
-    Not tagged. Not yet checked on a phone (Needs #3).
-  - **1.3** (GitHub Copilot): blocked on Needs #4. The "named models" half needs no
+    Not tagged. Not yet checked on a phone (Needs #6).
+  - **1.3** (GitHub Copilot): blocked on Needs #7. The "named models" half needs no
     work: a provider entry already is a named model with a picker in the prompt box.
     The `list_models` tool for the agent moves to 1.6, where it is first used.
-  - **1.4** (backends): in progress. Done: the runtime (`sw-backend`, ADR-0006), tested
-    in its jail as both the glibc and the static musl build. Next: the per-site
-    database, then serving `/api/*`, publishing, agent tools and the skill.
+  - **1.4** (backends: runtime and site database): merged as version 1.4.0. A site can
+    have JavaScript under `backend/` answering `/api/`, with its own SQLite database;
+    the agent has the `build-backend` skill and the `test_backend`, `backend_logs` and
+    `backend_schema` tools. See `docs/backends.md`. Not yet tried from a phone.
+  - **1.5** (secrets, outbound requests, visitor login): next.
 
 ## Not done, by choice or by circumstance
 

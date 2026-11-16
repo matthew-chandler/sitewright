@@ -88,6 +88,20 @@ See [metrics.md](metrics.md) for what is collected.
 | `uptime_resolve_local` | `false` | Check sites through the daemon's own listener instead of public DNS. For local development, where `*.localhost` does not resolve for the daemon. |
 | `retention_days` | `30` | Days raw requests, events and checks are kept. Daily rollups are kept forever. |
 
+### `[backends]`
+
+Site backends: agent-written JavaScript that answers a site's `/api/` requests. See
+[backends.md](backends.md).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Turn backends off entirely. Sites that have one can then not be published. |
+| `request_timeout_secs` | `10` | Longest a handler may run. |
+| `memory_mb` | `64` | JavaScript memory per site. |
+| `max_db_mb` | `100` | Largest a site's database may grow. |
+| `idle_secs` | `300` | A site's worker stops after this long without requests. |
+| `max_workers` | `8` | Most worker processes alive at once. |
+
 ### `[tls]`
 
 Used in standalone mode. See [dns-and-tls.md](dns-and-tls.md#standalone-mode).

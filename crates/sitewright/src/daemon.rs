@@ -32,6 +32,26 @@ pub struct Daemon {
     log_writer: JoinHandle<()>,
 }
 
+static WORKER_PROGRAM: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Use another program as the backend worker. The daemon normally starts its own
+/// executable; tests run inside a test binary, so they point this at the real one.
+pub fn set_worker_program(program: std::path::PathBuf) {
+    let _ = WORKER_PROGRAM.set(program);
+}
+
+/// How to start a backend worker: this program, with the worker argument.
+pub(crate) fn worker_command() -> anyhow::Result<sw_backend::WorkerCommand> {
+    let program = match WORKER_PROGRAM.get() {
+        Some(program) => program.clone(),
+        None => std::env::current_exe().context("cannot find this program's own path")?,
+    };
+    Ok(sw_backend::WorkerCommand {
+        program,
+        args: vec![sw_backend::WORKER_ARG.to_owned()],
+    })
+}
+
 /// Start the daemon with the given configuration. `listen` overrides `server.listen`.
 pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result<Daemon> {
     let Loaded {
@@ -81,6 +101,8 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         .await
         .context("cannot open the metrics sandbox")?;
     let providers = Providers::new(config.clone(), db.clone(), data.secrets_file());
+    let backend = sw_backend::SiteBackends::new(&config.backends, data.clone(), worker_command()?);
+    store.set_release_hooks(Arc::new(backend.clone()));
     let agent = Agent::new(
         store.clone(),
         domains.clone(),
@@ -91,6 +113,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     )
     .await
     .context("cannot start the agent")?;
+    agent.set_backends(backend.clone());
     let auth = Auth::new(
         db.clone(),
         &config.domains.admin_host(),
@@ -106,6 +129,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         hasher,
         metrics: metrics.clone(),
         agent,
+        backend: backend.clone(),
         domains,
         providers,
         auth: Arc::new(auth),
@@ -182,6 +206,24 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
             tracing::error!(%error, "admin socket failed");
         }
         let _ = std::fs::remove_file(&socket_path);
+    }));
+
+    // Stop backend workers that have had no requests for a while.
+    let token = cancel.clone();
+    let idle_backends = backend.clone();
+    servers.push(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = ticker.tick() => {
+                    let stopped = idle_backends.reap_idle();
+                    if stopped > 0 {
+                        tracing::debug!(stopped, "stopped idle backend workers");
+                    }
+                }
+            }
+        }
     }));
 
     let token = cancel.clone();

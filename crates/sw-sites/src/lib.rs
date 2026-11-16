@@ -19,6 +19,6 @@ pub use export::{Export, ExportFormat};
 pub use import::ImportFile;
 pub use routes::{Route, RouteTable};
 pub use store::{
-    Author, FileEntry, Hostname, ImportReport, PublishOutcome, Release, Site, SiteInfo, SiteStatus,
-    SiteStore,
+    Author, FileEntry, Hostname, ImportReport, PublishOutcome, Release, ReleaseHooks, ReleasePlan,
+    Site, SiteInfo, SiteStatus, SiteStore,
 };
