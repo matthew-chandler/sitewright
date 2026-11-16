@@ -75,6 +75,14 @@ impl DataDir {
     pub fn site_release(&self, name: &SiteName, sha: &str) -> PathBuf {
         self.site_releases(name).join(sha)
     }
+    /// A site's backend data: its database. Lives beside the repository, not in it.
+    pub fn site_data(&self, name: &SiteName) -> PathBuf {
+        self.site_dir(name).join("data")
+    }
+    /// A site's own database, used by its backend.
+    pub fn site_db(&self, name: &SiteName) -> PathBuf {
+        self.site_data(name).join("site.db")
+    }
     pub fn certs_dir(&self) -> PathBuf {
         self.root.join("certs")
     }

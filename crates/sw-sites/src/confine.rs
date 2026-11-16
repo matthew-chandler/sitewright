@@ -72,6 +72,56 @@ pub fn clean_rel_path(input: &str, allowed_extensions: &[String]) -> Result<Path
     }
 }
 
+/// The directory that holds a site's backend code.
+pub const BACKEND_DIR: &str = "backend";
+/// File types allowed under `backend/`.
+const BACKEND_EXTENSIONS: &[&str] = &["js", "mjs", "json", "sql", "md"];
+
+/// Whether a site-relative path is inside the backend directory.
+pub fn is_backend_path(path: &str) -> bool {
+    path == BACKEND_DIR
+        || path
+            .strip_prefix(BACKEND_DIR)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Check a site-relative path. Paths under `backend/` are code, not content: they take
+/// their own file types, and SQL only as migrations.
+pub fn clean_site_path(input: &str, allowed_extensions: &[String]) -> Result<PathBuf> {
+    if !is_backend_path(input) {
+        return clean_rel_path(input, allowed_extensions);
+    }
+    let allowed: Vec<String> = BACKEND_EXTENSIONS.iter().map(|e| (*e).to_owned()).collect();
+    let clean = clean_rel_path(input, &allowed)?;
+    let is_sql = input.to_ascii_lowercase().ends_with(".sql");
+    let in_migrations = input.starts_with("backend/migrations/");
+    if is_sql && !in_migrations {
+        return Err(SiteError::path(
+            input,
+            "SQL files belong in backend/migrations/",
+        ));
+    }
+    if in_migrations {
+        let name = input.trim_start_matches("backend/migrations/");
+        let (number, rest) = name.split_at(name.len().min(4));
+        let stem = rest.strip_suffix(".sql").unwrap_or("");
+        let valid = number.len() == 4
+            && number.bytes().all(|b| b.is_ascii_digit())
+            && stem.starts_with('_')
+            && stem.len() > 1
+            && stem
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !valid {
+            return Err(SiteError::path(
+                input,
+                "migrations are named like backend/migrations/0001_create_entries.sql",
+            ));
+        }
+    }
+    Ok(clean)
+}
+
 /// Join a cleaned relative path onto `root`, refusing to pass through a symlink.
 ///
 /// `root` must exist. Components of `rel` that do not exist yet are fine; any existing

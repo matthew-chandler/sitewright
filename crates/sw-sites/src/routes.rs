@@ -17,6 +17,8 @@ pub struct Route {
     pub primary_hostname: String,
     /// The immutable release directory files are served from.
     pub root: PathBuf,
+    /// Whether the release has a backend (`backend/index.js`) to answer `/api/*`.
+    pub backend: bool,
 }
 
 /// A snapshot of all routes. Rebuilt and swapped atomically whenever a site changes.

@@ -123,6 +123,29 @@ pub struct ImportReport {
 pub type HealthCheck =
     Arc<dyn Fn(Arc<Route>, String) -> BoxFuture<'static, Result<(), String>> + Send + Sync>;
 
+/// A release about to go live, as the release hooks see it.
+#[derive(Debug, Clone)]
+pub struct ReleasePlan {
+    pub site_id: i64,
+    pub site: SiteName,
+    pub sha: String,
+    /// The release directory.
+    pub root: PathBuf,
+}
+
+/// Work that belongs to switching a site to a new release but lives outside the store,
+/// such as migrating a backend's database. Installed once by the daemon.
+pub trait ReleaseHooks: Send + Sync {
+    /// Before the release goes live. An `Err` stops the publish; the previous release
+    /// stays live and the hook must leave things as it found them.
+    fn prepare<'a>(&'a self, plan: &'a ReleasePlan) -> BoxFuture<'a, Result<(), String>>;
+    /// The release went live but failed its health check and was rolled back: undo what
+    /// `prepare` did.
+    fn abandon<'a>(&'a self, plan: &'a ReleasePlan) -> BoxFuture<'a, ()>;
+    /// The release is live and healthy.
+    fn commit<'a>(&'a self, plan: &'a ReleasePlan) -> BoxFuture<'a, ()>;
+}
+
 /// Handle to the site store. Cheap to clone.
 #[derive(Clone)]
 pub struct SiteStore {
@@ -138,6 +161,7 @@ struct Inner {
     /// One async mutex per site name, so changes to a site never interleave.
     locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     health_check: OnceLock<HealthCheck>,
+    release_hooks: OnceLock<Arc<dyn ReleaseHooks>>,
 }
 
 impl std::fmt::Debug for SiteStore {
@@ -213,6 +237,7 @@ impl SiteStore {
                 routes: ArcSwap::from_pointee(RouteTable::default()),
                 locks: Mutex::new(HashMap::new()),
                 health_check: OnceLock::new(),
+                release_hooks: OnceLock::new(),
             }),
         };
         store.reload_routes().await?;
@@ -222,6 +247,11 @@ impl SiteStore {
     /// Install the post-publish health check. Can be set once; later calls are ignored.
     pub fn set_health_check(&self, check: HealthCheck) {
         let _ = self.inner.health_check.set(check);
+    }
+
+    /// Install the release hooks. Can be set once; later calls are ignored.
+    pub fn set_release_hooks(&self, hooks: Arc<dyn ReleaseHooks>) {
+        let _ = self.inner.release_hooks.set(hooks);
     }
 
     /// The current routing table snapshot.
@@ -734,7 +764,7 @@ impl SiteStore {
     /// Read one file from the working tree.
     pub async fn read_file(&self, name: &str, path: &str) -> Result<Vec<u8>> {
         let site = self.get(name).await?;
-        let rel = confine::clean_rel_path(path, &self.inner.limits.allowed_extensions)?;
+        let rel = confine::clean_site_path(path, &self.inner.limits.allowed_extensions)?;
         let repo = self.inner.data.site_repo(&site.name);
         let path = path.to_owned();
         blocking(move || {
@@ -754,7 +784,7 @@ impl SiteStore {
     pub async fn write_file(&self, name: &str, path: &str, data: Vec<u8>) -> Result<FileEntry> {
         let site = self.get(name).await?;
         let _guard = self.lock(&site.name).await;
-        let rel = confine::clean_rel_path(path, &self.inner.limits.allowed_extensions)?;
+        let rel = confine::clean_site_path(path, &self.inner.limits.allowed_extensions)?;
         let limits = self.inner.limits.clone();
         let repo = self.inner.data.site_repo(&site.name);
         let path = path.to_owned();
@@ -800,7 +830,7 @@ impl SiteStore {
     pub async fn delete_file(&self, name: &str, path: &str) -> Result<()> {
         let site = self.get(name).await?;
         let _guard = self.lock(&site.name).await;
-        let rel = confine::clean_rel_path(path, &self.inner.limits.allowed_extensions)?;
+        let rel = confine::clean_site_path(path, &self.inner.limits.allowed_extensions)?;
         let repo = self.inner.data.site_repo(&site.name);
         let path = path.to_owned();
         blocking(move || {
@@ -844,7 +874,7 @@ impl SiteStore {
             let mut skipped = Vec::new();
             let mut total: u64 = 0;
             for file in files {
-                match confine::clean_rel_path(&file.path, &limits.allowed_extensions) {
+                match confine::clean_site_path(&file.path, &limits.allowed_extensions) {
                     Ok(rel) => {
                         let size = file.data.len() as u64;
                         if size > limits.max_file_bytes {
@@ -984,6 +1014,29 @@ impl SiteStore {
 
         self.ensure_release_dir(&site.name, &sha).await?;
 
+        let plan = ReleasePlan {
+            site_id: site.id,
+            site: site.name.clone(),
+            sha: sha.clone(),
+            root: self.inner.data.site_release(&site.name, &sha),
+        };
+        let hooks = self.inner.release_hooks.get();
+        if let Some(hooks) = hooks
+            && let Err(reason) = hooks.prepare(&plan).await
+        {
+            self.audit(
+                author,
+                "site.publish.refused",
+                site.name.as_str(),
+                Some(&reason),
+            )
+            .await;
+            return Err(SiteError::Validation {
+                site: site.name.clone(),
+                problems: vec![reason],
+            });
+        }
+
         let now = now_ms();
         let author_str = author.as_str();
         let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
@@ -1021,6 +1074,9 @@ impl SiteStore {
             .execute(&self.inner.db)
             .await?;
             self.reload_routes().await?;
+            if let Some(hooks) = hooks {
+                hooks.abandon(&plan).await;
+            }
             self.audit(
                 author,
                 "site.publish.rolled_back",
@@ -1031,6 +1087,9 @@ impl SiteStore {
             return Err(SiteError::HealthCheck { sha, reason });
         }
 
+        if let Some(hooks) = hooks {
+            hooks.commit(&plan).await;
+        }
         self.prune_releases(site).await?;
         self.audit(author, "site.publish", site.name.as_str(), Some(&sha))
             .await;
@@ -1415,6 +1474,7 @@ impl SiteStore {
                         release_id: row.release_id,
                         sha: row.sha,
                         primary_hostname: row.primary_hostname,
+                        backend: root.join("backend/index.js").is_file(),
                         root,
                     });
                     by_site.insert(row.site_id, route.clone());

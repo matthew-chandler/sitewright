@@ -324,6 +324,15 @@ impl Backends {
         }
     }
 
+    /// Check that a backend's code loads, in a worker that is then discarded.
+    pub async fn check(
+        &self,
+        target: &Target,
+        files: BTreeMap<String, String>,
+    ) -> Result<(), BackendError> {
+        self.start(target, files).await.map(|_| ())
+    }
+
     /// Start a worker and load the backend into it.
     async fn start(
         &self,

@@ -257,15 +257,8 @@ impl SiteDb {
             .iter()
             .filter_map(|r| Some((r.try_get(0).ok()?, r.try_get(1).ok()?)))
             .collect();
-        for name in applied.keys() {
-            if !ordered.iter().any(|m| &m.name == name) {
-                return Err(format!(
-                    "migration {name} has already run on this site's database but its file is gone; \
-                     migrations must not be deleted or renamed"
-                ));
-            }
-        }
-
+        // An applied migration whose file is missing is tolerated: after a rollback the
+        // database is ahead of the code, which is safe as long as migrations only add.
         let mut done = Vec::new();
         for migration in ordered {
             let digest = hex(&Sha256::digest(migration.sql.as_bytes()));
@@ -822,10 +815,12 @@ mod tests {
         let edited = migration("0002_votes.sql", "CREATE TABLE votes (id);");
         let err = db.migrate(&[first.clone(), edited]).await.unwrap_err();
         assert!(err.contains("was changed after it ran"), "{err}");
-        let err = db.migrate(std::slice::from_ref(&first)).await.unwrap_err();
+        // Older code (after a rollback) may lack newer migration files: that is fine.
         assert!(
-            err.contains("0002_votes.sql") && err.contains("must not be deleted"),
-            "{err}"
+            db.migrate(std::slice::from_ref(&first))
+                .await
+                .unwrap()
+                .is_empty()
         );
 
         // Migrations cannot escape either.
