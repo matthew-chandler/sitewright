@@ -605,3 +605,142 @@ impl ParseSite for str {
         sw_core::SiteName::parse(self).unwrap()
     }
 }
+
+#[tokio::test]
+async fn rename_moves_the_site_and_redirects_the_old_address() {
+    let env = env().await;
+    env.store.create("old", "Old", Author::User).await.unwrap();
+    env.store.create("taken", "T", Author::User).await.unwrap();
+    env.store
+        .write_file("old", "index.html", b"hi".to_vec())
+        .await
+        .unwrap();
+    env.store
+        .publish("old", "first", Author::Agent)
+        .await
+        .unwrap();
+    env.store
+        .add_hostname("old", "blog.other.org", Author::User)
+        .await
+        .unwrap();
+
+    for (bad, why) in [
+        ("old", "same name"),
+        ("taken", "in use"),
+        ("Not Valid", "invalid"),
+        ("admin", "reserved"),
+    ] {
+        assert!(
+            env.store
+                .rename("old", bad, true, Author::User)
+                .await
+                .is_err(),
+            "{why}"
+        );
+    }
+    assert_eq!(
+        live_index(&env, "old.example.com").await.as_deref(),
+        Some("hi")
+    );
+
+    let site = env
+        .store
+        .rename("old", "new", true, Author::User)
+        .await
+        .unwrap();
+    assert_eq!(site.name.as_str(), "new");
+    assert!(env.store.find("old").await.unwrap().is_none());
+    assert!(
+        !env.data
+            .site_dir(&sw_core::SiteName::parse("old").unwrap())
+            .exists()
+    );
+    let info = env.store.info("new").await.unwrap();
+    assert_eq!(info.url, "https://new.example.com");
+    let routes = env.store.routes();
+    assert_eq!(routes.redirect("old.example.com"), Some("new.example.com"));
+    assert!(routes.get("old.example.com").is_none());
+    drop(routes);
+    assert_eq!(
+        live_index(&env, "new.example.com").await.as_deref(),
+        Some("hi")
+    );
+    assert_eq!(
+        live_index(&env, "blog.other.org").await.as_deref(),
+        Some("hi")
+    );
+
+    // The site keeps working under its new name: edit, publish and roll back.
+    env.store
+        .write_file("new", "index.html", b"again".to_vec())
+        .await
+        .unwrap();
+    env.store
+        .publish("new", "second", Author::Agent)
+        .await
+        .unwrap();
+    assert_eq!(
+        live_index(&env, "new.example.com").await.as_deref(),
+        Some("again")
+    );
+    env.store.rollback("new", None, Author::User).await.unwrap();
+    assert_eq!(
+        live_index(&env, "new.example.com").await.as_deref(),
+        Some("hi")
+    );
+
+    // The old name is free for another site only once its address is released.
+    assert!(
+        env.store
+            .create("old", "Other", Author::User)
+            .await
+            .is_err()
+    );
+    // Renaming back reuses the redirecting hostname; without a redirect the other
+    // address is dropped.
+    env.store
+        .rename("new", "old", false, Author::User)
+        .await
+        .unwrap();
+    let info = env.store.info("old").await.unwrap();
+    assert_eq!(info.url, "https://old.example.com");
+    let names: Vec<&str> = info.hostnames.iter().map(|h| h.hostname.as_str()).collect();
+    assert_eq!(names, ["old.example.com", "blog.other.org"]);
+    assert!(info.hostnames.iter().all(|h| !h.redirect));
+    assert_eq!(
+        live_index(&env, "old.example.com").await.as_deref(),
+        Some("hi")
+    );
+    assert!(env.store.routes().redirect("new.example.com").is_none());
+
+    // A custom primary hostname stays primary through a rename.
+    env.store
+        .add_hostname_as("old", "blog.other.org", true, Author::User)
+        .await
+        .unwrap();
+    env.store
+        .rename("old", "third", true, Author::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        env.store.info("third").await.unwrap().url,
+        "https://blog.other.org"
+    );
+    assert_eq!(
+        env.store.routes().redirect("old.example.com"),
+        Some("blog.other.org")
+    );
+
+    let site = env
+        .store
+        .set_title("third", "  A new title ", Author::User)
+        .await
+        .unwrap();
+    assert_eq!(site.title, "A new title");
+    assert!(
+        env.store
+            .set_title("third", " ", Author::User)
+            .await
+            .is_err()
+    );
+}

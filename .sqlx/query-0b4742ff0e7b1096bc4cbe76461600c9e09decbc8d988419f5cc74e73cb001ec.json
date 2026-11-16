@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE site_hostnames SET is_primary = 1, redirect = 0 WHERE site_id = ?1 AND hostname = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0b4742ff0e7b1096bc4cbe76461600c9e09decbc8d988419f5cc74e73cb001ec"
+}

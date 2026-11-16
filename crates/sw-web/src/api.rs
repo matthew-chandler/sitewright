@@ -36,6 +36,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/rollback", post(rollback_site))
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
+        .route("/v1/sites/{name}/rename", post(rename_site))
+        .route("/v1/sites/{name}/title", post(retitle_site))
         .route("/v1/sites/{name}/check-domain", get(check_domain))
         .route(
             "/v1/sites/{name}/hostnames",
@@ -267,6 +269,57 @@ async fn delete_site(
         ));
     }
     Ok(Json(state.store.delete(&name, Author::User).await?))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameBody {
+    /// The new name.
+    name: String,
+    /// Keep the old address and redirect it to the new one.
+    #[serde(default = "default_true")]
+    redirect: bool,
+}
+
+async fn rename_site(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<RenameBody>,
+) -> ApiResult<Json<SiteInfo>> {
+    if state.agent.is_busy(&name) {
+        return Err(sw_sites::SiteError::Conflict(
+            "a run is in progress on this site; wait for it or cancel it first".into(),
+        )
+        .into());
+    }
+    let site = state
+        .store
+        .rename(&name, &body.name, body.redirect, Author::User)
+        .await?;
+    Ok(Json(state.store.info(site.name.as_str()).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TitleBody {
+    title: String,
+}
+
+async fn retitle_site(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<TitleBody>,
+) -> ApiResult<Json<Site>> {
+    Ok(Json(
+        state
+            .store
+            .set_title(&name, &body.title, Author::User)
+            .await?,
+    ))
 }
 
 async fn restore_site(

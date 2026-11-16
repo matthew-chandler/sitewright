@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_primary FROM site_hostnames WHERE site_id = ?1 AND hostname = ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "is_primary",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "is_primary"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50f6aec702daba82fa70408ccfaed2a791f75b02922bca0cfabf200d18cb9a36"
+}

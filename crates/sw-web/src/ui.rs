@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/prompt", post(site_prompt))
         .route("/sites/{name}/rollback", post(site_rollback))
         .route("/sites/{name}/delete", post(site_delete))
+        .route("/sites/{name}/rename", post(site_rename))
         .route("/sites/{name}/export/{format}", get(site_export))
         .route("/sites/{name}/dashboard", get(dashboard_page))
         .route("/sites/{name}/dashboard/data", get(dashboard_data))
@@ -286,6 +287,9 @@ struct SitePage {
     busy: bool,
     /// The run in progress on this site, if any.
     running_run: Option<i64>,
+    zone: String,
+    /// Hostnames other than the primary one, with a note for those that redirect.
+    other_hostnames: Vec<String>,
     providers: Vec<ProviderOption>,
     runs: Vec<RunRow>,
     releases: Vec<ReleaseRow>,
@@ -539,9 +543,23 @@ async fn site_page(
         .find(|run| run.status == RunStatus::Running)
         .map(|run| run.id);
     let runs = recent.iter().map(RunRow::from).collect();
+    let other_hostnames = info
+        .hostnames
+        .iter()
+        .filter(|h| !h.is_primary)
+        .map(|h| {
+            if h.redirect {
+                format!("{} (redirects)", h.hostname)
+            } else {
+                h.hostname.clone()
+            }
+        })
+        .collect();
     render(SitePage {
         chrome,
         running_run,
+        zone: state.config.domains.default_zone().to_owned(),
+        other_hostnames,
         busy: state.agent.is_busy(&name),
         name,
         title: info.site.title,
@@ -619,6 +637,49 @@ async fn site_delete(
         Ok(_) => hx_redirect("/"),
         Err(e) => error_fragment(e.to_string()),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameForm {
+    title: String,
+    name: String,
+    /// A checkbox: present when ticked.
+    redirect: Option<String>,
+}
+
+/// Change a site's title, its name (and with it its address), or both.
+async fn site_rename(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(form): Form<RenameForm>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    let new_name = form.name.trim().to_ascii_lowercase();
+    let renaming = new_name != name;
+    if renaming && state.agent.is_busy(&name) {
+        return error_fragment("a run is in progress on this site; wait for it or cancel it first");
+    }
+    // Rename first: it is the step that can be refused.
+    if renaming
+        && let Err(e) = state
+            .store
+            .rename(&name, &new_name, form.redirect.is_some(), Author::User)
+            .await
+    {
+        return error_fragment(e.to_string());
+    }
+    if form.title.trim() != site.title
+        && let Err(e) = state
+            .store
+            .set_title(&new_name, &form.title, Author::User)
+            .await
+    {
+        return error_fragment(e.to_string());
+    }
+    hx_redirect(&format!("/sites/{new_name}"))
 }
 
 async fn site_export(

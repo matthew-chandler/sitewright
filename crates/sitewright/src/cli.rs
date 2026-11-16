@@ -138,6 +138,16 @@ pub enum SiteCommand {
     },
     /// Restore a deleted site.
     Restore { name: String },
+    /// Rename a site. Its address becomes `<new-name>.<zone>`.
+    Rename {
+        name: String,
+        new_name: String,
+        /// Drop the old address instead of redirecting it to the new one.
+        #[arg(long)]
+        no_redirect: bool,
+    },
+    /// Change a site's title.
+    Title { name: String, title: String },
     /// Attach, detach or promote a site's hostnames.
     #[command(subcommand)]
     Hostname(HostnameCommand),
@@ -369,6 +379,28 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
                 )
                 .await?;
             print_info(&info);
+        }
+        SiteCommand::Rename {
+            name,
+            new_name,
+            no_redirect,
+        } => {
+            let info: Value = client
+                .post(
+                    &format!("/v1/sites/{name}/rename"),
+                    &json!({ "name": new_name, "redirect": !no_redirect }),
+                )
+                .await?;
+            print_info(&info);
+        }
+        SiteCommand::Title { name, title } => {
+            let _: Value = client
+                .post(
+                    &format!("/v1/sites/{name}/title"),
+                    &json!({ "title": title }),
+                )
+                .await?;
+            println!("Renamed {name} to {title:?}.");
         }
         SiteCommand::Restore { name } => {
             let _: Value = client

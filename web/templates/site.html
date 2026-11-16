@@ -93,6 +93,27 @@
 </section>
 
 <section>
+  <h2>Name and address</h2>
+  <details>
+    <summary>Rename this site</summary>
+    <form hx-post="/sites/{{ name }}/rename" hx-target="find .status" hx-disabled-elt="find button">
+      <label for="rename-title">Title</label>
+      <input id="rename-title" name="title" required maxlength="120" value="{{ title }}">
+      <label for="rename-name">Name</label>
+      <input id="rename-name" name="name" required maxlength="40" pattern="[a-z0-9]([a-z0-9-]*[a-z0-9])?"
+             autocapitalize="none" autocomplete="off" spellcheck="false" value="{{ name }}">
+      <p class="hint">Lowercase letters, digits and hyphens. The address becomes <em>name</em>.{{ zone }}.</p>
+      <label class="check"><input type="checkbox" name="redirect" value="1" checked> Keep the old address and redirect it to the new one</label>
+      {% if !other_hostnames.is_empty() %}
+      <p class="hint">Also answers at: {% for h in other_hostnames %}{{ h }}{% if !loop.last %}, {% endif %}{% endfor %}</p>
+      {% endif %}
+      <button type="submit">Save</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+  </details>
+</section>
+
+<section>
   <h2>Delete</h2>
   <details>
     <summary>Delete this site</summary>
