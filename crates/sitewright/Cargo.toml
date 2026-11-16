@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 sw-update.workspace = true
+sw-backend.workspace = true
 semver = "1"
 sw-tls.workspace = true
 sw-agent.workspace = true
