@@ -42,8 +42,8 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish a release.** `main` is at 1.5.0 and nothing after 1.0.0 is tagged.
-   `git tag -a v1.5.0 -m "Sitewright 1.5.0" && git push origin v1.5.0` publishes it; the
+4. **Optional: publish a release.** `main` is at 1.6.0 and nothing after 1.0.0 is tagged.
+   `git tag -a v1.6.0 -m "Sitewright 1.6.0" && git push origin v1.6.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -200,7 +200,13 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
     Owner-managed secrets and approved hosts per site ("Backend access" on the site page,
     `sitewright backend ...`), `fetch` and `secrets.get` for backends, and built-in
     visitor accounts (`auth.*`).
-  - **1.6** (LLM access for backends, dashboards over site data): next.
+  - **1.6** (AI models for backends, dashboards over site data): `llm.chat` through the
+    daemon with per-site switch, model list, limits and usage is merged and on the VPS.
+    Tried with the real model: it built a working AI-backed page, and usage was counted.
+    Dashboard panels can also read the site's own database, read-only
+    (`"source": "site"`). Merged as version 1.6.0.
+  - **1.7** (other backend frameworks): optional on the roadmap, and not started. My
+    advice is to use 1.4 to 1.6 for a while first; say so if you want it built now.
 
 ## Not done, by choice or by circumstance
 
@@ -300,3 +306,13 @@ delete, agent-requested delete, provider test.
   `http://localhost:8080/enroll/...` link (browsers allow passkeys on localhost).
 - `http://hikes.dev.machandler.com`: the agent-built site.
 - `./scripts/smoke-dev.sh` from WSL.
+- Backends, from the portal once Needs #1 and #2 are done. Each is one prompt:
+  1. "A guestbook where visitors leave their name and a message." Then post an entry on
+     the site and look at **Backend** on the site's page (database size, console).
+  2. On a site's page, under **Backend access**, tick "Allow this site's backend to use
+     AI models" and save. Then prompt: "Add a box where visitors ask a question about
+     the site and an AI model answers." Check the usage line afterwards.
+  3. "Let visitors sign up and keep a private list of notes." Sign up as two people and
+     check that neither sees the other's notes.
+  4. Add a secret (any name and value) and prompt: "What secrets and hosts can this
+     site's backend use?" The answer should name the secret and never show its value.

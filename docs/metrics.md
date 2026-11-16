@@ -72,6 +72,11 @@ Each site has two:
 Both are made of the same thing: panels with a SQL query and a Vega-Lite chart. Every
 panel shows its SQL on demand.
 
+A panel reads from one of two places, chosen with its optional `source` field:
+`"metrics"` (the default) is the site's traffic, through the [metric views](#metric-views);
+`"site"` is the site's own backend database, so a guestbook can chart its entries per day
+next to its page views. See [Panels over the site's own data](#panels-over-the-sites-own-data).
+
 ### Dashboard spec
 
 ```json
@@ -115,6 +120,7 @@ JSON Schema:
           "id": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$" },
           "title": { "type": "string", "minLength": 1, "maxLength": 80 },
           "description": { "type": "string", "maxLength": 300 },
+          "source": { "enum": ["metrics", "site"], "default": "metrics" },
           "sql": { "type": "string" },
           "vega_lite": { "type": "object" }
         }
@@ -132,8 +138,9 @@ Validation before a spec is saved:
   `description`, `width`, `height`, `config` and `resolve`. Anywhere inside it, `data`,
   `datasets`, `url`, `href`, `lookup`, `from`, `usermeta` and `$schema` are rejected, as is
   any string that is a URL. The server injects the query's rows as the chart's data.
-- Every query is **run** in the sandbox below. If it fails, or the chart refers to a
-  column the query does not return, the spec is refused with the reasons.
+- Every query is **run** where its panel's `source` says: in the sandbox below, or
+  read-only on the site's own database. If it fails, or the chart refers to a column the
+  query does not return, the spec is refused with the reasons.
 
 ### Metric views
 
@@ -164,6 +171,43 @@ independent limits (`crates/sw-metrics/src/sandbox.rs`):
    rows even if it omits `WHERE site_id = :site_id` or asks for another site's id.
 3. **A 5-second time limit**, enforced with a progress handler.
 4. **A 1000-row limit.**
+
+### Panels over the site's own data
+
+A panel with `"source": "site"` runs its query on the database of the site's
+[backend](backends.md) instead of the metric views:
+
+```json
+{
+  "id": "entries",
+  "title": "Guestbook entries per day",
+  "source": "site",
+  "sql": "SELECT date(created_at / 1000, 'unixepoch') AS day, count(*) AS n FROM entries WHERE created_at BETWEEN :from AND :to GROUP BY day ORDER BY day",
+  "vega_lite": {
+    "mark": "bar",
+    "encoding": { "x": {"field": "day", "type": "temporal"}, "y": {"field": "n", "type": "quantitative"} }
+  }
+}
+```
+
+- `:from` and `:to` are the selected time range as **Unix milliseconds** (integers, bound
+  as parameters), because site tables conventionally store `Date.now()`. `:site_id` and
+  `?` placeholders are refused: the database is already the site's own.
+- One `SELECT` (or `WITH`), at most 4000 bytes, 5 seconds and 1000 rows.
+- The query runs under the site database's authorizer in its read-only mode
+  (`crates/sw-backend/src/sitedb.rs`): no writes, no schema changes, no `ATTACH` or
+  `PRAGMA`. Visitor sessions (`sw_sessions`) and password hashes cannot be read;
+  `sw_users` gives `id`, `email` and `created_at` only.
+- It reaches that site's database file and nothing else: not Sitewright's own database
+  (so not the metric views either, one panel reads one source) and not another site's.
+- A site with no backend database shows an error on such a panel; the other panels are
+  unaffected. Nothing is created by asking.
+- Rows the agent sees through `run_readonly_query` have the site's secret values
+  replaced, like the rest of a backend's output. The owner's dashboard shows rows as
+  they are.
+- The query uses the same connection as the site's request handlers, one statement at a
+  time, so a slow panel query can make a visitor's request wait (for at most the
+  5-second limit).
 
 Charts are drawn in the browser with vendored Vega-Lite using its expression interpreter,
 so the admin UI's Content-Security-Policy does not need `unsafe-eval`.

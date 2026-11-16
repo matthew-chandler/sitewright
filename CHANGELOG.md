@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-16
+
 ### Added
 
 - AI models for backends: `llm.chat` goes through the daemon with its credentials. Per
@@ -13,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   recorded usage with cost. Managed on the site's page, over the API, or with
   `sitewright backend ai`.
 - Agent tool `list_models`, so "use the new model" in a prompt can be resolved by name.
+- Dashboard panels over a site's own data: a panel with `"source": "site"` runs one
+  read-only `SELECT` on the site's backend database (entries per day, sign-ups), with
+  `:from` and `:to` as Unix milliseconds. The agent's `run_readonly_query` takes the same
+  `source`, and `metrics_schema` describes it.
 
 ### Changed
 

@@ -23,6 +23,8 @@ Do not repeat the standard panels. Three to six good panels beat twelve generic 
    - the sections of the site (path prefixes such as `/trails/`, `/recipes/`),
    - custom analytics events the pages send: look for `sw("name", {...})` calls.
 2. **Call `metrics_schema`** for the views, columns, parameters and the dashboard format.
+   If the site has a backend (files under `backend/`), also call `backend_schema` for the
+   tables of its own database: what the site stores is often its most telling number.
 3. **Explore** with `run_readonly_query`. Check what data exists before designing around
    it: which paths get views, which event names occur, what their `props` contain. A new
    site has little or no data; that is fine, design for the data it *will* have.
@@ -78,6 +80,42 @@ WHERE ts BETWEEN :from AND :to AND is_page_view
 GROUP BY source ORDER BY views DESC LIMIT 10
 ```
 
+## Panels over the site's own data
+
+A site with a backend has its own database: guestbook entries, sign-ups, orders, votes.
+A panel with `"source": "site"` runs its query there instead of on the metric views, so
+the dashboard can show what visitors *did* next to how many came.
+
+```json
+{
+  "id": "entries",
+  "title": "Guestbook entries per day",
+  "description": "How many visitors signed the guestbook.",
+  "source": "site",
+  "sql": "SELECT date(created_at / 1000, 'unixepoch') AS day, count(*) AS n FROM entries WHERE created_at BETWEEN :from AND :to GROUP BY day ORDER BY day",
+  "vega_lite": {
+    "mark": "bar",
+    "encoding": {
+      "x": {"field": "day", "type": "temporal", "title": null},
+      "y": {"field": "n", "type": "quantitative", "title": "Entries"}
+    }
+  }
+}
+```
+
+- Test such a query with `run_readonly_query` and `"source": "site"`.
+- Here `:from` and `:to` are **Unix milliseconds**, matching columns filled with
+  `Date.now()`. Check in `backend_schema` how a table stores its time before filtering
+  on it. There is no `:site_id`.
+- One panel reads one source: a site query cannot use `v_requests` and the other views,
+  and a metrics query cannot use the site's tables.
+- Read-only. `sw_users` (visitor accounts) gives `id`, `email` and `created_at` only, so
+  name the columns instead of `SELECT *`; sessions cannot be read.
+- Chart counts and totals, never people: no emails, names or message texts in a panel.
+- Only the published database counts. A table from a migration that is not published yet
+  does not exist here, and a site without a published backend has no database: leave
+  these panels out until it does.
+
 ## Writing the chart
 
 `vega_lite` is a Vega-Lite spec **without `data`**: the server injects the query's rows.
@@ -113,6 +151,9 @@ are rejected. Leave width and height out; the page sizes charts to fit.
 ```json
 { "version": 1, "panels": [ { "id": "...", "title": "...", "description": "...", "sql": "...", "vega_lite": { } } ] }
 ```
+
+- `source`: optional; leave it out for the metric views, `"site"` for the site's own
+  database.
 
 - `id`: lowercase letters, digits and hyphens; unique.
 - `title`: what the panel shows, in plain words. `description`: one sentence on how to

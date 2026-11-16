@@ -89,6 +89,17 @@ pub struct RunResult {
     pub last_insert_rowid: i64,
 }
 
+/// The rows of a read-only query, for a dashboard panel.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReadRows {
+    /// Column names in the query's order. Empty when the query returned no rows.
+    pub columns: Vec<String>,
+    /// One object per row, keyed by column name.
+    pub rows: Vec<Value>,
+    /// True when more rows matched than were asked for and the rest were dropped.
+    pub truncated: bool,
+}
+
 /// One migration file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Migration {
@@ -215,6 +226,35 @@ impl SiteDb {
             let outcome = fetch(&mut conn, sql, params, self.limits.max_rows).await;
             self.disarm(&mut conn, outcome, deadline).await
         }
+    }
+
+    /// Run a read-only query for a dashboard panel: like [`Self::query_read_only`], but
+    /// the column names come back in the order the query gives them, and a result
+    /// longer than `max_rows` is cut short and marked instead of being an error.
+    pub async fn query_read_only_with_columns(
+        &self,
+        sql: &str,
+        params: &[Value],
+        max_rows: usize,
+    ) -> Result<ReadRows, String> {
+        self.check_sql(sql)?;
+        let max_rows = max_rows.min(self.limits.max_rows);
+        let mut conn = self.conn.lock().await;
+        let deadline = self.arm(&mut conn, Mode::ReadOnly).await;
+        let outcome = fetch_with_columns(&mut conn, sql, params, max_rows).await;
+        self.disarm(&mut conn, outcome, deadline)
+            .await
+            .map_err(|error| {
+                // `explain` words a refusal for handler code; say what holds here.
+                if error.starts_with("not allowed here") {
+                    format!(
+                        "not allowed: a dashboard query may only SELECT from this site's own tables; \
+                         it cannot change anything, and visitor sessions and password hashes cannot be read ({error})"
+                    )
+                } else {
+                    error
+                }
+            })
     }
 
     /// Run a statement from a handler that changes rows.
@@ -476,6 +516,34 @@ async fn fetch(
         rows.push(row_to_json(&row));
     }
     Ok(rows)
+}
+
+/// Like [`fetch`], keeping the column order and stopping quietly at `max_rows`.
+async fn fetch_with_columns(
+    conn: &mut SqliteConnection,
+    sql: &str,
+    params: &[Value],
+    max_rows: usize,
+) -> Result<ReadRows, sqlx::Error> {
+    let query = bind(
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_owned())).persistent(false),
+        params,
+    );
+    let mut result = ReadRows::default();
+    let mut stream = query.fetch(conn);
+    while let Some(row) = stream.try_next().await? {
+        // The names are taken from the statement, not from a row object's keys: a JSON
+        // object here does not keep the order its keys were added in.
+        if result.columns.is_empty() {
+            result.columns = row.columns().iter().map(|c| c.name().to_owned()).collect();
+        }
+        if result.rows.len() >= max_rows {
+            result.truncated = true;
+            break;
+        }
+        result.rows.push(row_to_json(&row));
+    }
+    Ok(result)
 }
 
 async fn execute(
@@ -801,6 +869,88 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn dashboard_queries_keep_column_order_and_are_cut_short_not_refused() {
+        let (_dir, db) = db().await;
+        for name in ["zoe", "abe", "max"] {
+            db.run("INSERT INTO entries (name) VALUES (?)", &[json!(name)])
+                .await
+                .unwrap();
+        }
+        // Columns come back as the query orders them, not sorted as a row's keys are.
+        let sql = "SELECT name AS who, id AS entry, NULL AS gap, 1.5 AS average FROM entries WHERE id >= ? ORDER BY id";
+        let all = db
+            .query_read_only_with_columns(sql, &[json!(2)], 10)
+            .await
+            .unwrap();
+        assert_eq!(all.columns, ["who", "entry", "gap", "average"]);
+        assert_eq!(
+            all.rows,
+            [
+                json!({"who": "abe", "entry": 2, "gap": null, "average": 1.5}),
+                json!({"who": "max", "entry": 3, "gap": null, "average": 1.5}),
+            ]
+        );
+        assert!(!all.truncated);
+
+        // Exactly the cap is not truncation; one more row is.
+        let exact = db
+            .query_read_only_with_columns(sql, &[json!(2)], 2)
+            .await
+            .unwrap();
+        assert_eq!((exact.rows.len(), exact.truncated), (2, false));
+        let cut = db
+            .query_read_only_with_columns(sql, &[json!(1)], 2)
+            .await
+            .unwrap();
+        assert_eq!((cut.rows.len(), cut.truncated), (2, true));
+        assert_eq!(cut.rows[0]["who"], "zoe");
+
+        let none = db
+            .query_read_only_with_columns(sql, &[json!(99)], 10)
+            .await
+            .unwrap();
+        assert_eq!(none, ReadRows::default());
+
+        // The same guard as every other dashboard query, with an error that fits.
+        let other = _dir.path().join("other.db");
+        for sql in [
+            "DELETE FROM entries".to_owned(),
+            "INSERT INTO entries (name) VALUES ('x') RETURNING id".to_owned(),
+            "UPDATE entries SET name = 'x'".to_owned(),
+            "DROP TABLE entries".to_owned(),
+            "CREATE TABLE x (a)".to_owned(),
+            "PRAGMA table_info(entries)".to_owned(),
+            format!("ATTACH DATABASE '{}' AS o", other.display()),
+            "SELECT * FROM sw_sessions".to_owned(),
+            "SELECT count(*) FROM sw_sessions".to_owned(),
+            "SELECT password_hash FROM sw_users".to_owned(),
+            "SELECT * FROM sw_users".to_owned(),
+            "SELECT * FROM _sitewright_migrations".to_owned(),
+            "SELECT 1; DELETE FROM entries".to_owned(),
+        ] {
+            let error = db
+                .query_read_only_with_columns(&sql, &[], 10)
+                .await
+                .unwrap_err();
+            assert!(
+                error.starts_with("not allowed: a dashboard"),
+                "{sql}: {error}"
+            );
+        }
+        assert!(!other.exists());
+        let users = db
+            .query_read_only_with_columns("SELECT id, email, created_at FROM sw_users", &[], 10)
+            .await
+            .unwrap();
+        assert!(users.rows.is_empty());
+        let count = db
+            .query_read_only_with_columns("SELECT count(*) AS n FROM entries", &[], 10)
+            .await
+            .unwrap();
+        assert_eq!(count.rows, [json!({"n": 3})]);
     }
 
     #[tokio::test]

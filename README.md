@@ -7,8 +7,9 @@
 a server you own.**
 
 Sitewright is a single self-hosted binary. It serves your sites, hosts a mobile-first
-admin app with passkey sign-in, and runs an AI agent that builds and edits static sites
-through a small set of guarded tools. It works with any LLM provider (OpenAI-compatible,
+admin app with passkey sign-in, and runs an AI agent that builds and edits sites (static
+pages, plus a small sandboxed backend when a site needs one) through a small set of
+guarded tools. It works with any LLM provider (OpenAI-compatible,
 Anthropic, Gemini) and any DNS host. No Docker, no database server, no build step.
 
 ```text
@@ -22,8 +23,14 @@ One minute later:     https://hikes.example.com
   sizes, and publishes. Follow-up prompts edit the site.
 - **Every release is a git commit.** One tap rolls back; history is never lost.
 - **Safe by construction.** The agent has no shell and no network access. It can only
-  call tools that are confined to one site's files, and it cannot delete a site: it can
-  only ask you to confirm by typing the site's name.
+  call tools that are confined to one site, and it cannot delete a site: it can only ask
+  you to confirm by typing the site's name. Backend code it writes runs with no file,
+  network or process access of its own.
+- **Backends when a site needs one.** A guestbook, a sign-up sheet, members-only pages,
+  a page that asks an AI model: the agent writes server-side JavaScript that runs in a
+  seccomp-jailed worker per site, with its own SQLite database, built-in visitor
+  accounts, and access to your API keys, approved outside hosts and AI models only as
+  far as you allow. A worker uses about 4 MB. See [Backends](docs/backends.md).
 - **Any model, any registrar.** Adapters for OpenAI-compatible APIs (OpenAI, Azure OpenAI,
   OpenRouter, Groq, Ollama), Anthropic and Gemini. You add one wildcard DNS record at
   whatever DNS host you use; Sitewright verifies it.

@@ -21,6 +21,6 @@ pub use manager::self_test;
 pub use manager::{
     BackendError, BackendRequest, BackendResponse, Backends, Host, Limits, Target, WorkerCommand,
 };
-pub use sitedb::{DbLimits, Migration, RunResult, SiteDb, SiteDbs};
+pub use sitedb::{DbLimits, Migration, ReadRows, RunResult, SiteDb, SiteDbs};
 pub use sites::{BackendSource, DraftOutcome, LogLine, SiteBackends, SiteHostEntry};
 pub use worker::{ENTRY, WORKER_ARG, worker_main};
