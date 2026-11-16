@@ -33,4 +33,7 @@ All four must pass before a commit. CI runs the same commands plus a static musl
 - Never commit, print or log secrets. `.env` and `secrets.toml` are git-ignored; keep it so.
 - On the dev VPS act only as `devtest` over `ssh racknerd-dev`. Never use `sudo`. Anything
   that needs root goes into `docs/STATUS.md` under "Needs from Matthew".
-- The agent inside Sitewright must never gain a shell tool or a network tool.
+- The agent inside Sitewright must never gain a shell tool or a network tool. Code it
+  writes for a site's backend runs only inside the jailed worker (`sw-backend`, ADR-0006)
+  and reaches the network only through the daemon, to hosts the owner approved for that
+  site. Never widen the worker's system-call allowlist without an ADR.

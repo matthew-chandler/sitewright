@@ -48,6 +48,42 @@ _Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting o
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
    screenshots, `.claude/settings.json`.
 
+3. **Check release 1.2 on your phone** (it is running on the VPS, reachable once #1 is
+   done): the run page clock and "Back to site", Markdown in agent messages, Ctrl+Enter
+   with a keyboard, and "Name and address" on a site's page.
+
+4. **GitHub Copilot (roadmap 1.3) needs two things from you before I can build it.**
+   What I found (2026-11-16):
+   - GitHub Models, the simple hosted API, was retired on 2026-07-30, so that is out.
+   - Calling Copilot's chat API directly is officially supported only for specific
+     partner tools (OpenCode since January 2026). Other tools do it with VS Code's
+     client ID; I will not ship that in a public repository tied to your account.
+   - The supported way is GitHub's **Copilot SDK** (there is a Rust crate,
+     `github-copilot-sdk`). It drives GitHub's Copilot runtime as a helper process and
+     accepts a fine-grained personal access token or an OAuth app token. Sitewright's
+     tools can be registered as custom tools with the built-in ones switched off. The
+     runtime is a 209 MB download (150 MB compressed), and Copilot runs the agent loop,
+     so this is a second engine beside the current one, not a new provider entry.
+   - Unknown: how much memory the runtime uses. The VPS has about 550 MB free. I
+     downloaded the runtime but was not permitted to execute it.
+
+   What I need:
+   - A decision: build the SDK route (my recommendation if the memory fits), or drop
+     Copilot.
+   - To measure memory, run this in WSL and send me the two numbers it prints (it
+     starts the runtime with an empty home directory, waits, and stops it):
+
+     ```sh
+     cd /tmp/claude-1000/-home-matthew-projects-sitewright/1b882e3a-1b73-4cca-9cf6-d3391cee77b0/scratchpad/copilot-cli
+     HOME=$PWD/home ./x/package/copilot --headless --stdio < /dev/null > /dev/null 2>&1 &
+     sleep 8; ps -o rss=,vsz= -p $!; kill $!
+     ```
+
+     If that folder is gone (it is temporary), `npm pack @github/copilot-linux-x64`
+     and unpack it first.
+   - For testing against the real service: a fine-grained personal access token with
+     the "Copilot Requests" permission, as `COPILOT_GITHUB_TOKEN` in `.env`.
+
 ## Milestones
 
 | Milestone | State |
@@ -149,9 +185,15 @@ _Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting o
 ## In progress
 
 - Waiting on Needs #1 to finish the move to `*.machandler.com`.
-- Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16). Release 1.2 (portal
-  polish and site rename) is merged as version 1.2.0: not tagged, and not yet checked on a
-  phone. Next: **1.3** (named models and GitHub Copilot), starting with the Copilot spike.
+- Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
+  - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
+    Not tagged. Not yet checked on a phone (Needs #3).
+  - **1.3** (GitHub Copilot): blocked on Needs #4. The "named models" half needs no
+    work: a provider entry already is a named model with a picker in the prompt box.
+    The `list_models` tool for the agent moves to 1.6, where it is first used.
+  - **1.4** (backends): in progress. Done: the runtime (`sw-backend`, ADR-0006), tested
+    in its jail as both the glibc and the static musl build. Next: the per-site
+    database, then serving `/api/*`, publishing, agent tools and the skill.
 
 ## Not done, by choice or by circumstance
 

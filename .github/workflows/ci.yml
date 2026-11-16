@@ -70,6 +70,12 @@ jobs:
       - run: cargo zigbuild --release --target x86_64-unknown-linux-musl -p sitewright
       - run: |
           file target/x86_64-unknown-linux-musl/release/sitewright | tee /dev/stderr | grep -q 'statically linked'
+      # The backend worker is this binary. Run the backend tests against the static
+      # build, because its system calls (and so its jail) differ from the glibc build.
+      - run: |
+          printf '#!/bin/sh\nexec "%s" __backend-worker\n' "$PWD/target/x86_64-unknown-linux-musl/release/sitewright" > "$RUNNER_TEMP/worker"
+          chmod +x "$RUNNER_TEMP/worker"
+          SW_BACKEND_TEST_WORKER="$RUNNER_TEMP/worker" cargo test -p sw-backend --test backend
 
   skills:
     name: validate built-in skills
