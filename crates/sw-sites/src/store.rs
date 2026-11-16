@@ -78,6 +78,8 @@ pub struct Release {
 pub struct Hostname {
     pub hostname: String,
     pub is_primary: bool,
+    /// The hostname redirects to the primary hostname instead of serving the site.
+    pub redirect: bool,
 }
 
 /// Everything about one site, for `site_info` and the UI.
@@ -175,6 +177,17 @@ impl TryFrom<SiteRow> for Site {
             deleted_at: row.deleted_at,
         })
     }
+}
+
+/// Trim and check a site title.
+fn valid_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > 120 {
+        return Err(SiteError::Invalid(
+            "the title must be between 1 and 120 characters".into(),
+        ));
+    }
+    Ok(title)
 }
 
 /// Run blocking filesystem or git work off the async executor.
@@ -288,7 +301,7 @@ impl SiteStore {
 
     async fn hostnames(&self, site_id: i64) -> Result<Vec<Hostname>> {
         let rows = sqlx::query!(
-            "SELECT hostname, is_primary FROM site_hostnames WHERE site_id = ?1 ORDER BY is_primary DESC, hostname",
+            "SELECT hostname, is_primary, redirect FROM site_hostnames WHERE site_id = ?1 ORDER BY is_primary DESC, hostname",
             site_id
         )
         .fetch_all(&self.inner.db)
@@ -298,6 +311,7 @@ impl SiteStore {
             .map(|r| Hostname {
                 hostname: r.hostname,
                 is_primary: r.is_primary != 0,
+                redirect: r.redirect != 0,
             })
             .collect())
     }
@@ -348,21 +362,8 @@ impl SiteStore {
 
     /// Create a site: validate the name, reserve its hostname and initialise its repository.
     pub async fn create(&self, name: &str, title: &str, author: Author) -> Result<Site> {
-        let site_name = SiteName::parse(name)?;
-        let admin_host = self.inner.domains.admin_host();
-        if self.inner.domains.is_reserved(&site_name) {
-            return Err(SiteError::Invalid(format!("the name {name:?} is reserved")));
-        }
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > 120 {
-            return Err(SiteError::Invalid(
-                "the title must be between 1 and 120 characters".into(),
-            ));
-        }
-        let hostname = self.inner.domains.site_hostname(&site_name);
-        if hostname == admin_host {
-            return Err(SiteError::Invalid(format!("the name {name:?} is reserved")));
-        }
+        let (site_name, hostname) = self.usable_name(name)?;
+        let title = valid_title(title)?;
 
         let _guard = self.lock(&site_name).await;
         if let Some(existing) = self.find(name).await? {
@@ -430,6 +431,185 @@ impl SiteStore {
         self.get(name).await
     }
 
+    /// Check a name for a new or renamed site and work out its default hostname.
+    fn usable_name(&self, name: &str) -> Result<(SiteName, String)> {
+        let site_name = SiteName::parse(name)?;
+        let hostname = self.inner.domains.site_hostname(&site_name);
+        if self.inner.domains.is_reserved(&site_name) || hostname == self.inner.domains.admin_host()
+        {
+            return Err(SiteError::Invalid(format!("the name {name:?} is reserved")));
+        }
+        Ok((site_name, hostname))
+    }
+
+    /// Change a site's title.
+    pub async fn set_title(&self, name: &str, title: &str, author: Author) -> Result<Site> {
+        let site = self.get(name).await?;
+        let title = valid_title(title)?;
+        let now = now_ms();
+        sqlx::query!(
+            "UPDATE sites SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            title,
+            now,
+            site.id
+        )
+        .execute(&self.inner.db)
+        .await?;
+        self.audit(author, "site.title", name, Some(title)).await;
+        self.get(name).await
+    }
+
+    /// Rename a site. Its directory moves, its run history follows, and
+    /// `<new>.<zone>` replaces `<old>.<zone>`, keeping that hostname's role (primary or
+    /// extra). With `redirect_old`, the old default hostname stays attached and
+    /// redirects to the primary hostname; otherwise it is detached. Other hostnames are
+    /// untouched. Callers must make sure no agent run is in progress on the site.
+    pub async fn rename(
+        &self,
+        name: &str,
+        new_name: &str,
+        redirect_old: bool,
+        author: Author,
+    ) -> Result<Site> {
+        if name == new_name {
+            return Err(SiteError::Invalid(
+                "the new name is the same as the old one".into(),
+            ));
+        }
+        let (new_site_name, new_host) = self.usable_name(new_name)?;
+        let site = self.get(name).await?;
+        let old_host = self.inner.domains.site_hostname(&site.name);
+
+        // Lock both names, in a fixed order so two renames cannot deadlock.
+        let (first, second) = if site.name.as_str() < new_site_name.as_str() {
+            (&site.name, &new_site_name)
+        } else {
+            (&new_site_name, &site.name)
+        };
+        let _guard_a = self.lock(first).await;
+        let _guard_b = self.lock(second).await;
+
+        let site = self.get(name).await?;
+        if let Some(existing) = self.find(new_name).await? {
+            return Err(SiteError::Conflict(match existing.status {
+                SiteStatus::Active => format!("a site named {new_name:?} already exists"),
+                SiteStatus::Deleted => format!(
+                    "a site named {new_name:?} was deleted recently; restore it, or wait until it is purged"
+                ),
+            }));
+        }
+
+        let now = now_ms();
+        let mut tx = sw_core::db::begin_write(&self.inner.db).await?;
+        let taken = sqlx::query_scalar!(
+            r#"SELECT count(*) as "n!: i64" FROM site_hostnames WHERE hostname = ?1 AND site_id != ?2"#,
+            new_host,
+            site.id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if taken > 0 {
+            return Err(SiteError::Conflict(format!(
+                "the hostname {new_host} is already used by another site"
+            )));
+        }
+        let old_role = sqlx::query_scalar!(
+            "SELECT is_primary FROM site_hostnames WHERE site_id = ?1 AND hostname = ?2",
+            site.id,
+            old_host
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let has_primary = sqlx::query_scalar!(
+            r#"SELECT count(*) as "n!: i64" FROM site_hostnames WHERE site_id = ?1 AND is_primary = 1 AND hostname != ?2"#,
+            site.id,
+            old_host
+        )
+        .fetch_one(&mut *tx)
+        .await?
+            > 0;
+        // The new hostname takes over the old one's role. A site whose primary is a
+        // custom hostname keeps it.
+        let new_is_primary = old_role.is_some_and(|p| p != 0) || !has_primary;
+        if new_is_primary {
+            sqlx::query!(
+                "UPDATE site_hostnames SET is_primary = 0 WHERE site_id = ?1",
+                site.id
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        if redirect_old {
+            sqlx::query!(
+                "UPDATE site_hostnames SET redirect = 1 WHERE site_id = ?1 AND hostname = ?2",
+                site.id,
+                old_host
+            )
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query!(
+                "DELETE FROM site_hostnames WHERE site_id = ?1 AND hostname = ?2",
+                site.id,
+                old_host
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        // The new hostname may already be attached to this site as an extra.
+        sqlx::query!(
+            "INSERT INTO site_hostnames (site_id, hostname, is_primary, redirect, created_at) VALUES (?1, ?2, ?3, 0, ?4)
+             ON CONFLICT (hostname) DO UPDATE SET is_primary = excluded.is_primary, redirect = 0",
+            site.id,
+            new_host,
+            new_is_primary,
+            now
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "UPDATE sites SET name = ?1, updated_at = ?2 WHERE id = ?3",
+            new_name,
+            now,
+            site.id
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "UPDATE agent_runs SET site_name = ?1 WHERE site_name = ?2",
+            new_name,
+            name
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Move the directory while the transaction is open, so either both happen or
+        // neither does.
+        let from = self.inner.data.site_dir(&site.name);
+        let to = self.inner.data.site_dir(&new_site_name);
+        let (move_from, move_to) = (from.clone(), to.clone());
+        blocking(move || {
+            // A directory without a database row is a leftover.
+            if move_to.exists() {
+                std::fs::remove_dir_all(&move_to)?;
+            }
+            Ok(std::fs::rename(&move_from, &move_to)?)
+        })
+        .await?;
+        if let Err(e) = tx.commit().await {
+            if let Err(undo) = std::fs::rename(&to, &from) {
+                tracing::error!(error = %undo, from = %to.display(), to = %from.display(),
+                    "could not move a site directory back after a failed rename");
+            }
+            return Err(e.into());
+        }
+
+        self.reload_routes().await?;
+        self.audit(author, "site.rename", name, Some(new_name))
+            .await;
+        self.get(new_name).await
+    }
+
     /// Attach an extra hostname to a site.
     pub async fn add_hostname(&self, name: &str, hostname: &str, author: Author) -> Result<()> {
         self.add_hostname_as(name, hostname, false, author).await
@@ -469,7 +649,7 @@ impl SiteStore {
             .execute(&mut *tx)
             .await?;
             sqlx::query!(
-                "UPDATE site_hostnames SET is_primary = 1 WHERE site_id = ?1 AND hostname = ?2",
+                "UPDATE site_hostnames SET is_primary = 1, redirect = 0 WHERE site_id = ?1 AND hostname = ?2",
                 site.id,
                 host
             )
@@ -1199,10 +1379,23 @@ impl SiteStore {
                FROM site_hostnames h
                JOIN sites s ON s.id = h.site_id
                JOIN releases r ON r.id = s.current_release
-               WHERE s.status = 'active'"#
+               WHERE s.status = 'active' AND h.redirect = 0"#
         )
         .fetch_all(&self.inner.db)
         .await?;
+        let redirects = sqlx::query!(
+            r#"SELECT h.hostname,
+                      (SELECT p.hostname FROM site_hostnames p WHERE p.site_id = s.id ORDER BY p.is_primary DESC, p.id LIMIT 1) as "primary_hostname!"
+               FROM site_hostnames h
+               JOIN sites s ON s.id = h.site_id
+               WHERE s.status = 'active' AND h.redirect = 1"#
+        )
+        .fetch_all(&self.inner.db)
+        .await?
+        .into_iter()
+        .filter(|r| r.hostname != r.primary_hostname)
+        .map(|r| (r.hostname, r.primary_hostname))
+        .collect();
 
         let mut by_host = HashMap::with_capacity(rows.len());
         let mut by_site: HashMap<i64, Arc<Route>> = HashMap::new();
@@ -1230,7 +1423,9 @@ impl SiteStore {
             };
             by_host.insert(row.hostname, route);
         }
-        self.inner.routes.store(Arc::new(RouteTable::new(by_host)));
+        self.inner
+            .routes
+            .store(Arc::new(RouteTable::new(by_host, redirects)));
         Ok(())
     }
 

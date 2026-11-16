@@ -23,11 +23,21 @@ pub struct Route {
 #[derive(Debug, Default)]
 pub struct RouteTable {
     by_host: HashMap<String, Arc<Route>>,
+    /// Hostnames that redirect to a site's primary hostname.
+    redirects: HashMap<String, String>,
 }
 
 impl RouteTable {
-    pub(crate) fn new(by_host: HashMap<String, Arc<Route>>) -> Self {
-        Self { by_host }
+    pub(crate) fn new(
+        by_host: HashMap<String, Arc<Route>>,
+        redirects: HashMap<String, String>,
+    ) -> Self {
+        Self { by_host, redirects }
+    }
+
+    /// The hostname a redirecting hostname points to, if `hostname` is one.
+    pub fn redirect(&self, hostname: &str) -> Option<&str> {
+        self.redirects.get(hostname).map(String::as_str)
     }
 
     /// Look up a normalized hostname (lowercase, no port).

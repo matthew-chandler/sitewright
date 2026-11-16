@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-16
+
+### Added
+
+- Rename a site from its page in the portal (title, name and address), with
+  `sitewright site rename <old> <new> [--no-redirect]` and `sitewright site title`, or
+  over the API (`/v1/sites/<name>/rename`, `/v1/sites/<name>/title`). The old address
+  redirects to the new one unless you turn that off.
+- The run page shows when a run started and how long it has been running, and has a
+  "Back to site" link while the run continues in the background. The site page links to
+  the run in progress.
+- Agent messages are rendered as Markdown. Raw HTML in a message is shown as text.
+- Ctrl+Enter (Cmd+Enter on a Mac) submits a prompt.
+
+### Changed
+
+- The agent is told to write Markdown and to finish with a summary, never a question.
+
 ## [1.1.0] - 2026-11-16
 
 ### Added

@@ -24,6 +24,20 @@ run by something else). Two things keep them apart:
 - List those names under `domains.reserved_names`, so nobody (including the agent) can
   create a site called `api`.
 
+### Renaming a site
+
+```sh
+sitewright site rename hikes trails                 # hikes.example.com now redirects to trails.example.com
+sitewright site rename hikes trails --no-redirect   # or drop the old address
+sitewright site title trails "Trail Log"
+```
+
+The portal has the same under "Name and address" on the site's page. A rename moves the
+site's files and run history, and `<new>.<zone>` takes the place of `<old>.<zone>`. Custom
+hostnames are not touched. The redirect is an extra hostname like any other: remove it
+with `sitewright site hostname remove` when you no longer need it, and until then the old
+name cannot be given to another site. A site cannot be renamed while a run is in progress.
+
 ### Extra and custom hostnames
 
 ```sh

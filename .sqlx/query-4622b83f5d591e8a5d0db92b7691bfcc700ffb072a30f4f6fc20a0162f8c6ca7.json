@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE sites SET title = ?1, updated_at = ?2 WHERE id = ?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "4622b83f5d591e8a5d0db92b7691bfcc700ffb072a30f4f6fc20a0162f8c6ca7"
+}

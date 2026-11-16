@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT hostname, is_primary FROM site_hostnames WHERE site_id = ?1 ORDER BY is_primary DESC, hostname",
+  "query": "SELECT hostname, is_primary, redirect FROM site_hostnames WHERE site_id = ?1 ORDER BY is_primary DESC, hostname",
   "describe": {
     "columns": [
       {
@@ -24,6 +24,17 @@
             "name": "is_primary"
           }
         }
+      },
+      {
+        "name": "redirect",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "redirect"
+          }
+        }
       }
     ],
     "parameters": {
@@ -31,8 +42,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "7119551a7b8a38158c0a82d52b5d2870eb159cf688fb24826484e504e56ce8ea"
+  "hash": "42e75996a4eb4ed0b886e3fbd0b8ba1d272f94204b4f9e1d7e4f77275070f6a6"
 }

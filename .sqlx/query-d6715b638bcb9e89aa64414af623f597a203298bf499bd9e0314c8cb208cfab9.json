@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO site_hostnames (site_id, hostname, is_primary, redirect, created_at) VALUES (?1, ?2, ?3, 0, ?4)\n             ON CONFLICT (hostname) DO UPDATE SET is_primary = excluded.is_primary, redirect = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "d6715b638bcb9e89aa64414af623f597a203298bf499bd9e0314c8cb208cfab9"
+}

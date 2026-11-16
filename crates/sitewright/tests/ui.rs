@@ -818,6 +818,65 @@ async fn create_watch_edit_roll_back_and_delete_from_the_ui() {
             .contains("Second edition")
     );
 
+    // Rename: the address changes, the old one redirects, and run history follows.
+    let renamed = browser
+        .form(
+            "/sites/hikes/rename",
+            &[
+                ("title", "Trail Log"),
+                ("name", "trails"),
+                ("redirect", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(
+        hx(&renamed, "hx-redirect").as_deref(),
+        Some("/sites/trails")
+    );
+    let trails = browser.get("/sites/trails").await.text().await.unwrap();
+    assert!(trails.contains("Trail Log") && trails.contains("hikes.sites.test (redirects)"));
+    assert!(
+        trails.contains("href=\"/runs/2\""),
+        "runs follow the rename"
+    );
+    let moved = t.get(&host("hikes"), "/about?x=1").await;
+    assert_eq!(moved.status(), 308);
+    assert_eq!(
+        moved.headers()["location"],
+        "http://trails.sites.test/about?x=1"
+    );
+    assert!(
+        t.get(&host("trails"), "/")
+            .await
+            .text()
+            .await
+            .unwrap()
+            .contains("Second edition")
+    );
+    let refused = browser
+        .form(
+            "/sites/trails/rename",
+            &[("title", "Trail Log"), ("name", "admin")],
+        )
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        refused.contains("msg error") && refused.contains("reserved"),
+        "{refused}"
+    );
+    // And back, without keeping the other address.
+    let back = browser
+        .form(
+            "/sites/trails/rename",
+            &[("title", "Washington Hikes"), ("name", "hikes")],
+        )
+        .await;
+    assert_eq!(hx(&back, "hx-redirect").as_deref(), Some("/sites/hikes"));
+    assert_eq!(t.get(&host("hikes"), "/").await.status(), 200);
+    assert_eq!(t.get(&host("trails"), "/").await.status(), 404);
+
     // The site page lists both releases with a change summary; roll back to the first.
     let site_page = browser.get("/sites/hikes").await.text().await.unwrap();
     assert!(site_page.contains("First version") && site_page.contains("Second edition"));

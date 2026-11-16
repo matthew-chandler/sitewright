@@ -80,7 +80,23 @@ async fn dispatch(
     let routes = d.state.store.routes();
     match routes.get(&host) {
         Some(route) => site::serve(&d.state, route.clone(), peer, request).await,
-        None => unknown_host(),
+        None => match routes.redirect(&host) {
+            // The old address of a renamed site: send visitors to the same page on the
+            // new one.
+            Some(primary) => {
+                let path = request.uri().path_and_query().map_or("/", |p| p.as_str());
+                let to = format!("{}{path}", d.state.config.domains.public_url(primary));
+                (
+                    StatusCode::PERMANENT_REDIRECT,
+                    [
+                        (header::LOCATION, to),
+                        (header::CACHE_CONTROL, "no-store".into()),
+                    ],
+                )
+                    .into_response()
+            }
+            None => unknown_host(),
+        },
     }
 }
 

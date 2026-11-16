@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE agent_runs SET site_name = ?1 WHERE site_name = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "5455075a96fa08d279a14c9cd89b5ed7151023b4502642cef58ba9fe1d82de6c"
+}

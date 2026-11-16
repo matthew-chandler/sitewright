@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT h.hostname, s.id as \"site_id!\", s.name, r.id as \"release_id!\", r.sha,\n                      (SELECT p.hostname FROM site_hostnames p WHERE p.site_id = s.id ORDER BY p.is_primary DESC, p.id LIMIT 1) as \"primary_hostname!\"\n               FROM site_hostnames h\n               JOIN sites s ON s.id = h.site_id\n               JOIN releases r ON r.id = s.current_release\n               WHERE s.status = 'active'",
+  "query": "SELECT h.hostname, s.id as \"site_id!\", s.name, r.id as \"release_id!\", r.sha,\n                      (SELECT p.hostname FROM site_hostnames p WHERE p.site_id = s.id ORDER BY p.is_primary DESC, p.id LIMIT 1) as \"primary_hostname!\"\n               FROM site_hostnames h\n               JOIN sites s ON s.id = h.site_id\n               JOIN releases r ON r.id = s.current_release\n               WHERE s.status = 'active' AND h.redirect = 0",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       true
     ]
   },
-  "hash": "0adaaa8d9cc57dba3082b57c24bfe470cc8f8b9969bfd65cd867ce92c4e09863"
+  "hash": "c9b87a55d5f312e590cd151b8986480d09cce4f34c6f22b34f5cb790dab05b0b"
 }

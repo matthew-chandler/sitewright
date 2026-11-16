@@ -149,8 +149,9 @@ _Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting o
 ## In progress
 
 - Waiting on Needs #1 to finish the move to `*.machandler.com`.
-- Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16). Current release in
-  progress: **1.2** (portal polish and site rename).
+- Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16). Release 1.2 (portal
+  polish and site rename) is merged as version 1.2.0: not tagged, and not yet checked on a
+  phone. Next: **1.3** (named models and GitHub Copilot), starting with the Copilot spike.
 
 ## Not done, by choice or by circumstance
 

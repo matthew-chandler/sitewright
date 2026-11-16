@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT h.hostname,\n                      (SELECT p.hostname FROM site_hostnames p WHERE p.site_id = s.id ORDER BY p.is_primary DESC, p.id LIMIT 1) as \"primary_hostname!\"\n               FROM site_hostnames h\n               JOIN sites s ON s.id = h.site_id\n               WHERE s.status = 'active' AND h.redirect = 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "hostname",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "hostname"
+          }
+        }
+      },
+      {
+        "name": "primary_hostname!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hostnames",
+            "name": "hostname"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "339a293cc0a8ada50d4f87c68815c53d7b17327f84f7943b8a1bfcc4c9e9e077"
+}

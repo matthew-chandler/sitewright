@@ -3486,7 +3486,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "sitewright"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3793,7 +3793,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sw-agent"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3814,7 +3814,7 @@ dependencies = [
 
 [[package]]
 name = "sw-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "ipnet",
  "rustls",
@@ -3829,7 +3829,7 @@ dependencies = [
 
 [[package]]
 name = "sw-llm"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3848,7 +3848,7 @@ dependencies = [
 
 [[package]]
 name = "sw-metrics"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "futures-util",
  "hex",
@@ -3870,7 +3870,7 @@ dependencies = [
 
 [[package]]
 name = "sw-sites"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arc-swap",
  "flate2",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "sw-tls"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arc-swap",
  "axum",
@@ -3918,7 +3918,7 @@ dependencies = [
 
 [[package]]
 name = "sw-update"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "flate2",
  "hex",
@@ -3941,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "sw-web"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "askama",
  "async-trait",
