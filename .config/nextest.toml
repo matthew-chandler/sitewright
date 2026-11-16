@@ -1,0 +1,5 @@
+# The certificate tests talk to a local ACME server (Pebble) and poll for the result.
+# Under a loaded machine they occasionally time out; nothing else is retried.
+[[profile.default.overrides]]
+filter = 'binary(standalone) | binary(pebble)'
+retries = 2

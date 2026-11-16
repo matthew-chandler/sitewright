@@ -46,6 +46,29 @@ backend/migrations/0001_<what>.sql    database schema, applied in order at publi
   same anonymous, daily-rotating id the metrics use, and none of the `X-Forwarded-For`
   family of headers.
 
+## Visitor accounts
+
+A backend can let visitors sign up and sign in with `auth.signUp`, `auth.signIn` and
+`auth.user`. The backend's code never handles a password hash or a session token:
+
+- Accounts and sessions live in two tables Sitewright manages inside the site's
+  database, `sw_users` and `sw_sessions`. Site SQL can read `id`, `email` and
+  `created_at` of users (to join its own tables to them) and nothing else; it cannot
+  write to either table, and migrations cannot alter them or attach triggers to
+  anything (a trigger would run with Sitewright's own rights).
+- Passwords are hashed with Argon2id. Sessions are random 256-bit tokens, stored only
+  as SHA-256 hashes, valid for 30 days.
+- The session cookie is `HttpOnly`, `SameSite=Lax`, and on HTTPS `Secure` with the
+  `__Host-` prefix, so it belongs to that one site's hostname.
+- Five failed sign-ins for an account lock it for 15 minutes. A sign-in for an unknown
+  address takes as long as one for a known address.
+- Changing a password ends all of that account's sessions.
+
+There is no email verification and no password reset, because Sitewright cannot send
+email. To remove an account or sign someone out yourself, stop the daemon and edit the
+site's database: `sqlite3 <data>/sites/<name>/data/site.db "DELETE FROM sw_users WHERE
+email = '...'"`.
+
 ## Secrets and outside services
 
 A backend can call other services over HTTPS, under two controls that only you hold.
@@ -132,8 +155,8 @@ be published.
 
 ## What backends cannot do yet
 
-Visitor accounts, LLM access through Sitewright, scheduled jobs, binary uploads and npm
-packages. The first two are on the [roadmap](ROADMAP.md).
+LLM access through Sitewright, email, scheduled jobs, binary uploads and npm packages.
+The first is on the [roadmap](ROADMAP.md).
 
 ## Backups
 
