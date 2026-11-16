@@ -36,10 +36,21 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 | Abuse of the event beacon | Strict validation, a 2 KB body limit, a per-visitor rate limit, bots ignored. Events can only add rows for the site whose hostname received them. |
 | Abuse of `check_domain` to probe internal services | One GET to a fixed path with a random token, no redirects, and only "matched or not" is reported. |
 | Visitor privacy | No raw IP addresses are stored: visitors are a hash of IP, user agent and site, salted with a key that rotates (and is destroyed) daily. Query strings are not logged. The beacon sets no cookies, stores nothing on the device and honours Do Not Track and Global Privacy Control. Raw rows are kept 30 days. |
+| Certificate rate-limit abuse through random subdomains | In standalone mode certificates are requested only for hostnames that belong to a site (and the admin host). The TLS resolver returns no certificate for anything else, and a handshake never triggers issuance. Failed attempts back off for up to 6 hours, and a precheck skips names that do not reach the server. |
+| Tampered updates | Release archives are signed with minisign. `sitewright update` verifies the signature against the public key compiled into the running binary, and the SHA-256, before replacing anything; the previous binary and a pre-migration database copy are kept for `--rollback`. |
 | Vulnerable dependencies | `cargo deny` (advisories, licenses, bans) in CI; Dependabot. One TLS stack (`rustls` + `ring`); OpenSSL is banned. Current, justified advisory exceptions are listed in `deny.toml`. |
 
-Arriving with M6: certificate issuance limited to known hostnames, the hardened systemd
-unit and signed updates.
+## Notes on specific mechanisms
+
+- **The systemd unit** (`deploy/sitewright.service`) runs the daemon as the unprivileged
+  `sitewright` user with `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`,
+  `ProtectHome`, a system-call filter, and only `CAP_NET_BIND_SERVICE`. It may write to its
+  data directory and to the directory holding its own binary; the latter is what allows a
+  verified self-update.
+- **The release key** is a minisign key. Its public half is compiled into every binary
+  (`release/minisign.pub`); the secret half exists only as a GitHub Actions secret and in
+  the owner's offline backup. Rotating it means shipping a release, signed with the old
+  key, that carries the new public key.
 
 ## What is deliberately out of scope in v1
 

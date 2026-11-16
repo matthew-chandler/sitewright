@@ -6,22 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-15
+
+The first public release: everything planned for v1, published as a release candidate so
+that the update path to 1.0.0 can be exercised on a real server.
+
 ### Added
 
-- Workspace scaffold, CI, dev and deploy scripts, and a placeholder daemon (M0).
-- Proxy-mode site serving (M1): TOML configuration, SQLite state, a git-versioned site
-  store with immutable releases and instant rollback, host-based routing, static file
-  serving, a privacy-preserving request log, and `sitewright site` commands over an admin
-  Unix socket.
-- The agent (M2): an `LlmProvider` trait with an OpenAI-compatible adapter (OpenAI, Azure
-  OpenAI, OpenRouter, Ollama and others), a tool-calling loop with twelve sandboxed tools,
-  site validation, turn, token and daily-spend limits, cancellation, replayable run
-  events with cost tracking, and `sitewright prompt`.
-- The web UI (M3): a mobile-first, installable admin app with passkey sign-in, live run
-  streaming, release history with one-tap rollback, typed-confirmation delete, provider
-  settings with "Test connection", API tokens, and `sitewright admin invite`.
-- Skills and more providers (M4): Agent Skills loaded on demand, four built-in skills,
-  user skills in the data directory, and adapters for Anthropic and Gemini.
-- Metrics and dashboards (M5): a cookie-free event beacon, uptime checks with site status,
-  daily rollups with 30-day retention of raw data, a default dashboard, AI-designed
-  dashboards whose SQL runs in a read-only sandbox, and a status grid on the home screen.
+- **Serving.** Static sites, one per hostname, each versioned in git with immutable
+  releases, instant rollback, soft delete with a 7-day recovery window, and import of
+  existing folders. Host-based routing, clean URLs, a per-site `404.html`, caching and
+  security headers, compression.
+- **Proxy mode and standalone mode.** Run behind nginx, Caddy or Cloudflare, or let the
+  daemon serve HTTPS itself with Let's Encrypt certificates (HTTP-01), requested only for
+  hostnames that belong to a site, renewed at a third of their lifetime or when the
+  certificate authority's renewal information says so.
+- **The agent.** A tool-calling loop with eighteen sandboxed tools (no shell, no network),
+  site validation before every publish, automatic rollback of a release that cannot be
+  served, turn, token and daily-spend limits, cancellation, and replayable run histories
+  with cost tracking. Deleting a site always needs a person to type its name.
+- **LLM providers.** Adapters for OpenAI-compatible APIs (OpenAI, Azure OpenAI,
+  OpenRouter, Groq, Ollama and others), Anthropic and Gemini, with retries, backoff and a
+  "Test connection" check.
+- **Skills.** Agent Skills loaded on demand: `create-site`, `edit-site`, `delete-site`,
+  `setup-domain`, `design-dashboard`, `export-site`, plus your own in the data directory.
+- **The admin app.** A mobile-first, installable PWA: passkey sign-in, live run progress,
+  release history with one-tap rollback, dashboards, provider settings, API tokens.
+- **Metrics.** A request log without IP addresses, a cookie-free event beacon, uptime
+  checks with site status, daily rollups with 30-day retention of raw data, a standard
+  dashboard and an AI-designed dashboard per site whose SQL runs in a read-only sandbox.
+- **Operations.** Signed releases, `sitewright update` with signature verification and
+  `--rollback`, `sitewright init`, `sitewright doctor`, an installer with a hardened
+  systemd unit, and export of any site as plain files or a Docker build context.
+- A CLI for every core operation over an owner-only Unix socket.
+
+[Unreleased]: https://github.com/matthew-chandler/sitewright/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/matthew-chandler/sitewright/releases/tag/v0.9.0

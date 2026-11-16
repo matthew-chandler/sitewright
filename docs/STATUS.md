@@ -3,21 +3,44 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-15 (M5 done; M6 next)_
+_Last updated: 2026-11-15 (M6 built; v0.9.0 and v1.0.0 releases wait on Needs #1)_
 
 ## Needs from Matthew
 
-1. *(done)* Phone checklist: all 15 steps pass (2026-11-15), including sign-in from the
-   installed app and the offline shell.
+1. **Store the release signing key as GitHub Actions secrets** (plan input #6). The key
+   pair was generated on your WSL machine, outside the repository, in
+   `~/.config/sitewright-release/` (`minisign.key`, `minisign.password`, `minisign.pub`).
+   Claude Code's permission system did not let the agent set repository secrets, so:
 
-2. *(done)* Admin UI over HTTPS and the phone checklist: completed 2026-11-15.
+   ```sh
+   cd ~/projects/sitewright
+   gh secret set MINISIGN_SECRET_KEY < ~/.config/sitewright-release/minisign.key
+   gh secret set MINISIGN_PASSWORD   < ~/.config/sitewright-release/minisign.password
+   ```
 
-3. **Create `.claude/settings.json` (optional, convenience).** Claude Code's permission
-   classifier refused to let the agent write its own allow-list, which is reasonable. The
-   exact file contents are in [development.md](development.md#claude-code-permissions).
+   Then **copy that directory somewhere offline** (a password manager or a USB stick):
+   whoever holds `minisign.key` and its password can sign updates every installation will
+   accept. The public half is already in the repository (`release/minisign.pub`).
 
-Done by Matthew so far: nginx bootstrap run (2026-11-15), `*.dev.machandler.com` switched
-to DNS only.
+2. **Publish the releases** (after #1). Either tell the agent to continue, or:
+
+   ```sh
+   git checkout main && git pull
+   git tag v0.9.0 && git push origin v0.9.0      # release.yml builds, signs, publishes
+   ```
+
+   What remains after that is the last M6 acceptance step: install v0.9.0 on the VPS, bump
+   the version to 1.0.0 (one small PR), tag `v1.0.0`, and run `sitewright update` and
+   `sitewright update --rollback` on the VPS. The steps are under "Finishing v1.0.0" below.
+
+3. **Optional: screenshots or a GIF** of the phone flow for the README. The agent has no
+   browser to capture them.
+
+4. **Optional: `.claude/settings.json`.** The exact contents are in
+   [development.md](development.md#claude-code-permissions).
+
+Done by Matthew: nginx bootstrap, `*.dev` DNS-only, certbot for the admin host, the admin
+record set to DNS only, and the full phone checklist (2026-11-15).
 
 ## Milestones
 
@@ -29,7 +52,7 @@ to DNS only.
 | M3 Web UI and passkeys | done; phone checklist passed 2026-11-15 |
 | M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
 | M5 Metrics and dashboards | done |
-| M6 Standalone TLS, updates, export, v1.0.0 | not started |
+| M6 Standalone TLS, updates, export, v1.0.0 | built; releases wait on the signing secrets (Needs #1, #2) |
 
 ## Done
 
@@ -87,13 +110,37 @@ to DNS only.
   vendored Vega-Lite (no `eval`), and the home status grid with uptime and sparklines.
   130 tests.
 
+- **M6:** standalone mode (`sw-tls`: ACME HTTP-01 with `instant-acme`, a certificate
+  store with a per-hostname resolver, renewal at a third of the lifetime plus ARI, an HTTPS
+  listener, HTTP redirect) tested against Pebble locally and in CI; `sw-update` (release
+  lookup, minisign and SHA-256 verification, atomic swap, rollback including the
+  pre-migration database); `sitewright update`, `init`, `doctor`, `export`; the
+  `export_site` tool and `export-site` skill; `scripts/install.sh`; a hardened systemd
+  unit; nginx and Caddy examples; `release.yml`; all docs. 145 tests.
+  **Verified on the VPS:** in standalone mode three site hosts got Let's Encrypt staging
+  certificates and are served on port 18443; an unknown hostname gets no certificate.
+
 ## In progress
 
-- M6: standalone TLS (ACME), signed releases and self-update, export, install, v1.0.0.
+- Nothing. Waiting on Needs #1 to publish v0.9.0.
 
-## Next
+## Finishing v1.0.0
 
-- Nothing after M6; v1.0.0 is tagged there.
+Once the signing secrets exist:
+
+1. `git tag v0.9.0 && git push origin v0.9.0`; wait for the Release workflow; check the
+   release has two archives, each with `.sha256` and `.minisig`, and `install.sh`.
+2. On the VPS as devtest, install that release's binary over `~/bin/sitewright`
+   (download the x86_64 archive, verify, extract) and restart the user service.
+3. Bump the workspace version to `1.0.0`, add a `## [1.0.0]` section to `CHANGELOG.md`,
+   merge, `git tag v1.0.0 && git push origin v1.0.0`.
+4. On the VPS: `~/bin/sitewright --data-dir ~/sitewright-data update` (expect "Signature
+   and checksum verified", then the service restarts as 1.0.0), `... doctor`, then
+   `... update --rollback` (back to 0.9.0) and `... update` again.
+5. Per the plan, production Let's Encrypt certificates may be tried on at most 5 dev
+   hostnames: remove `acme_directory` from `[tls]` in the VPS config, restart, and check.
+6. Docker is not installed in WSL, so building an exported context was not run; the
+   archive layout and the digest-pinned Dockerfile are covered by tests.
 
 ## Decisions worth knowing (beyond the ADRs)
 
@@ -101,6 +148,13 @@ to DNS only.
   (`scripts/sqlx-prepare.sh --check`). Run the script after touching a query or migration.
 - `deny.toml` ignores RUSTSEC-2026-0459 (bundled SQLite, local-only attack) with a written
   justification, because no sqlx release accepts the fixed `libsqlite3-sys` yet.
+- Releases are built by a hand-written `release.yml`, not cargo-dist (ADR-0005).
+- The binary is installed to `/opt/sitewright/bin`, owned by the service user, so that a
+  verified self-update can replace it under `ProtectSystem=strict`.
+- The publish health check calls the site router in-process instead of over the network,
+  so it behaves the same in proxy and standalone mode.
+- The dev VPS now runs in standalone mode (HTTPS on 18443, staging certificates) while
+  nginx keeps forwarding port 80; the previous config is `config.toml.bak-proxy` there.
 - The AI dashboard is designed inside the create run (the `create-site` skill's last step)
   and updated by edit runs when they change what visitors can do, rather than by a
   separate automatic run: one run, one cost, and the agent already has the site in

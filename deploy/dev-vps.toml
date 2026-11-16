@@ -2,7 +2,7 @@
 # scripts/deploy-dev.sh on first deploy; later edits on the server are never overwritten.
 
 [server]
-mode = "proxy"
+mode = "standalone"
 listen = "127.0.0.1:18080"
 # nginx on the same machine forwards requests and sets X-Forwarded-For.
 trusted_proxies = ["127.0.0.1/32"]
@@ -15,3 +15,11 @@ admin_url = "https://sitewright-dev.machandler.com"
 # Sites under *.dev are plain HTTP: Cloudflare's free certificate does not cover
 # second-level subdomains.
 public_scheme = "http"
+
+# Standalone-mode TLS test: HTTPS on 18443 with Let's Encrypt *staging* certificates,
+# while nginx keeps forwarding port 80 (sites over HTTP and ACME challenges) to 18080.
+[tls]
+https_listen = "0.0.0.0:18443"
+acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+redirect_http = false
+include_admin_host = false

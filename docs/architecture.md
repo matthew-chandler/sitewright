@@ -15,7 +15,9 @@ grows with each milestone; [PLAN.md](../PLAN.md) describes the full v1 design.
 | `sw-metrics` | Request log and privacy-preserving visitor hashing. |
 | `sw-llm` | The `LlmProvider` trait, SSE parsing, retries and the provider adapters. |
 | `sw-agent` | The agent loop, its tools, the system prompt and run persistence. |
-| `sw-tls`, `sw-update` | Placeholders for later milestones. |
+| `sw-metrics` (continued) | Event beacon, uptime checks, rollups, the read-only SQL sandbox and dashboards. |
+| `sw-tls` | Standalone mode: ACME client, certificate store with a per-hostname resolver, renewal manager, HTTPS listener. |
+| `sw-update` | Release lookup, minisign and checksum verification, atomic binary swap, rollback. |
 
 Dependencies point one way: `sitewright` → `sw-web` → `sw-agent` → `sw-sites`, `sw-llm` →
 `sw-core`.
@@ -121,6 +123,34 @@ Every request to the admin hostname passes one guard (`sw_web::admin::guard`):
 Authentication is passkeys only. `sitewright admin invite` creates a one-time enrollment
 link over the admin socket; the same command is the recovery path. See
 [security.md](security.md).
+
+## Standalone TLS
+
+```mermaid
+flowchart LR
+    S[Site or hostname created] --> M[Certificate manager<br>scan every 30 s]
+    M -->|name reaches us?| P[HTTP precheck]
+    P --> A[ACME order, HTTP-01]
+    A -->|token| H[Port 80: /.well-known/acme-challenge/]
+    A --> C[(certs/&lt;hostname&gt;/)]
+    C --> R[Resolver: certificate by SNI]
+    R --> T[Port 443]
+```
+
+The manager's input is the list of hostnames in the database, nothing else. The resolver
+answers a TLS handshake with the stored certificate for that server name or with none, in
+which case the handshake fails: an unknown name can never cause a certificate request.
+Renewal is due when a third of a certificate's own lifetime remains, or earlier if the
+certificate authority's renewal information says so.
+
+## Updates
+
+`sitewright update` (or the daily check, if `updates.auto` is on) downloads the release
+archive for this platform together with its minisign signature and checksum, verifies both
+against the key compiled into the running binary, keeps the current binary as
+`sitewright.prev`, swaps the new one in atomically and asks the daemon to exit so systemd
+starts it. A new version copies the database before migrating; `update --rollback`
+restores both the binary and that copy.
 
 ## The file sandbox
 
