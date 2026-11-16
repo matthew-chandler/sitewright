@@ -42,8 +42,8 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish a release.** `main` is at 1.5.0 and nothing after 1.0.0 is tagged.
-   `git tag -a v1.5.0 -m "Sitewright 1.5.0" && git push origin v1.5.0` publishes it; the
+4. **Optional: publish a release.** `main` is at 1.6.0 and nothing after 1.0.0 is tagged.
+   `git tag -a v1.6.0 -m "Sitewright 1.6.0" && git push origin v1.6.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -203,7 +203,8 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
   - **1.6** (AI models for backends, dashboards over site data): `llm.chat` through the
     daemon with per-site switch, model list, limits and usage is merged and on the VPS.
     Tried with the real model: it built a working AI-backed page, and usage was counted.
-    Dashboards over a site's own database: in progress.
+    Dashboard panels can also read the site's own database, read-only
+    (`"source": "site"`). Merged as version 1.6.0.
   - **1.7** (other backend frameworks): optional on the roadmap, and not started. My
     advice is to use 1.4 to 1.6 for a while first; say so if you want it built now.
 
