@@ -466,7 +466,9 @@ async fn containerize_site(
         .store
         .set_containerized(&name, body.on, Author::User)
         .await?;
-    Ok(Json(serde_json::json!({ "site": name, "containerized": body.on })))
+    Ok(Json(
+        serde_json::json!({ "site": name, "containerized": body.on }),
+    ))
 }
 
 async fn container_part(

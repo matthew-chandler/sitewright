@@ -48,7 +48,9 @@ pub async fn describe(state: &AppState, name: &str) -> Result<Package, String> {
         .sites()
         .into_iter()
         .find(|route| route.site_id == site.id)
-        .ok_or_else(|| format!("{name} has not been published yet, so there is nothing to package"))?;
+        .ok_or_else(|| {
+            format!("{name} has not been published yet, so there is nothing to package")
+        })?;
 
     let llm_settings = state.backend.llm().settings(site.id).await?;
     let llm = if llm_settings.enabled && route.backend {
@@ -177,13 +179,25 @@ pub async fn build(state: &AppState, name: &str) -> Result<BuiltImage, String> {
             user: format!("{RUN_AS}:{RUN_AS}"),
             working_dir: "/".into(),
             labels: vec![
-                ("org.opencontainers.image.title".into(), package.manifest.title.clone()),
-                ("org.opencontainers.image.revision".into(), package.manifest.release.clone()),
+                (
+                    "org.opencontainers.image.title".into(),
+                    package.manifest.title.clone(),
+                ),
+                (
+                    "org.opencontainers.image.revision".into(),
+                    package.manifest.release.clone(),
+                ),
                 (
                     "org.opencontainers.image.description".into(),
-                    format!("The site {} packaged by Sitewright; see /SETUP.md", package.manifest.name),
+                    format!(
+                        "The site {} packaged by Sitewright; see /SETUP.md",
+                        package.manifest.name
+                    ),
                 ),
-                ("dev.sitewright.version".into(), package.manifest.sitewright_version.clone()),
+                (
+                    "dev.sitewright.version".into(),
+                    package.manifest.sitewright_version.clone(),
+                ),
             ],
             created_unix_secs: created,
         };
@@ -271,7 +285,10 @@ pub fn guide(package: &Package) -> String {
             ));
             rows.push((
                 format!("{prefix}_MODEL"),
-                format!("The model or deployment name. Packaged value: `{}`.", model.provider.model),
+                format!(
+                    "The model or deployment name. Packaged value: `{}`.",
+                    model.provider.model
+                ),
                 "no",
             ));
         }
@@ -382,7 +399,10 @@ pub fn guide(package: &Package) -> String {
 
     let _ = writeln!(g, "## What the site may reach\n");
     if m.hosts.is_empty() {
-        let _ = writeln!(g, "The backend may not send requests to any outside host.\n");
+        let _ = writeln!(
+            g,
+            "The backend may not send requests to any outside host.\n"
+        );
     } else {
         let _ = writeln!(
             g,

@@ -476,7 +476,10 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
         } => {
             std::fs::create_dir_all(&output)
                 .with_context(|| format!("cannot create {}", output.display()))?;
-            let mut parts = vec![("image", format!("{name}-image.tar")), ("guide", format!("{name}-SETUP.md"))];
+            let mut parts = vec![
+                ("image", format!("{name}-image.tar")),
+                ("guide", format!("{name}-SETUP.md")),
+            ];
             if !no_data {
                 parts.push(("data", format!("{name}-data.db")));
             }
@@ -495,9 +498,7 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
                     .with_context(|| format!("cannot write {}", path.display()))?;
                 println!("Wrote {} ({} bytes).", path.display(), bytes.len());
             }
-            println!(
-                "Next: read {name}-SETUP.md. In short: docker load -i {name}-image.tar"
-            );
+            println!("Next: read {name}-SETUP.md. In short: docker load -i {name}-image.tar");
         }
         SiteCommand::Rename {
             name,

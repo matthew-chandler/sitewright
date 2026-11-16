@@ -88,6 +88,8 @@ if grep -q 'value-from-sitewright' "$guide" || grep -aq 'value-from-sitewright' 
   echo "error: a secret's value is in the package" >&2; exit 1
 fi
 echo "    image: $(du -h "$image" | cut -f1), guide: $(wc -l < "$guide") lines"
+# KEEP_DIR=<dir> keeps the downloads for a closer look.
+if [ -n "${KEEP_DIR:-}" ]; then cp "$work/out/"* "$KEEP_DIR/"; fi
 
 if [ "$use_docker" = 0 ]; then
   echo "==> archive checks passed (Docker steps skipped)"

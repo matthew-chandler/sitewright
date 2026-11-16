@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-16
+
+### Added
+
+- **Containerized sites.** A site can be marked as containerized when it is created
+  (a checkbox on the new-site form) or later (the site's page, or
+  `sitewright site containerize`). Its Container page offers an image that runs without
+  Sitewright, a setup guide generated for that site, and a copy of its data;
+  `sitewright site image` downloads all three. See `docs/containers.md` and ADR-0007.
+- `sitewright run-site`: serve one packaged site with no daemon, with secrets and AI
+  model keys from the environment. `sitewright import-data` places a downloaded
+  database into a container volume.
+- `sw-image`: writes `docker load`-compatible image archives without Docker.
+- CI loads and runs a site image with Docker (`scripts/container-smoke.sh`).
+
+### Changed
+
+- Site databases keep SQLite's temporary data in memory.
+
 ## [1.6.0] - 2026-11-16
 
 ### Added

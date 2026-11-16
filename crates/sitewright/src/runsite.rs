@@ -283,7 +283,10 @@ pub fn import_data(args: &ImportDataArgs) -> anyhow::Result<()> {
         buf
     };
     if &header != b"SQLite format 3\0" {
-        bail!("{} is not a database downloaded from Sitewright", args.file.display());
+        bail!(
+            "{} is not a database downloaded from Sitewright",
+            args.file.display()
+        );
     }
     let data = DataDir::new(&args.data_dir);
     let target = data.site_db(&name);
@@ -300,7 +303,8 @@ pub fn import_data(args: &ImportDataArgs) -> anyhow::Result<()> {
         stale.push(suffix);
         let _ = std::fs::remove_file(stale);
     }
-    std::fs::copy(&args.file, &target).with_context(|| format!("cannot write {}", target.display()))?;
+    std::fs::copy(&args.file, &target)
+        .with_context(|| format!("cannot write {}", target.display()))?;
     // Run as root (to write into a fresh volume), hand everything to the site's user.
     let mut pending = vec![args.data_dir.clone()];
     while let Some(path) = pending.pop() {
@@ -311,6 +315,10 @@ pub fn import_data(args: &ImportDataArgs) -> anyhow::Result<()> {
             pending.extend(entries.flatten().map(|e| e.path()));
         }
     }
-    println!("Imported the data of {} into {}.", manifest.name, args.data_dir.display());
+    println!(
+        "Imported the data of {} into {}.",
+        manifest.name,
+        args.data_dir.display()
+    );
     Ok(())
 }
