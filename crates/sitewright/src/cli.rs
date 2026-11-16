@@ -138,6 +138,23 @@ pub enum SiteCommand {
     },
     /// Restore a deleted site.
     Restore { name: String },
+    /// Attach, detach or promote a site's hostnames.
+    #[command(subcommand)]
+    Hostname(HostnameCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HostnameCommand {
+    /// Serve the site on another hostname too.
+    Add {
+        site: String,
+        hostname: String,
+        /// Make it the primary hostname. The previous primary stays attached.
+        #[arg(long)]
+        primary: bool,
+    },
+    /// Stop serving the site on a hostname. The primary hostname cannot be removed.
+    Remove { site: String, hostname: String },
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
@@ -330,6 +347,28 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
                 )
                 .await?;
             println!("Deleted {name}. Undo with `sitewright site restore {name}`.");
+        }
+        SiteCommand::Hostname(HostnameCommand::Add {
+            site,
+            hostname,
+            primary,
+        }) => {
+            let info: Value = client
+                .post(
+                    &format!("/v1/sites/{site}/hostnames"),
+                    &json!({ "hostname": hostname, "primary": primary }),
+                )
+                .await?;
+            print_info(&info);
+        }
+        SiteCommand::Hostname(HostnameCommand::Remove { site, hostname }) => {
+            let info: Value = client
+                .delete(
+                    &format!("/v1/sites/{site}/hostnames"),
+                    &json!({ "hostname": hostname }),
+                )
+                .await?;
+            print_info(&info);
         }
         SiteCommand::Restore { name } => {
             let _: Value = client

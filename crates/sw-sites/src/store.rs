@@ -350,7 +350,7 @@ impl SiteStore {
     pub async fn create(&self, name: &str, title: &str, author: Author) -> Result<Site> {
         let site_name = SiteName::parse(name)?;
         let admin_host = self.inner.domains.admin_host();
-        if site_name.is_reserved(&admin_host) {
+        if self.inner.domains.is_reserved(&site_name) {
             return Err(SiteError::Invalid(format!("the name {name:?} is reserved")));
         }
         let title = title.trim();
@@ -432,7 +432,55 @@ impl SiteStore {
 
     /// Attach an extra hostname to a site.
     pub async fn add_hostname(&self, name: &str, hostname: &str, author: Author) -> Result<()> {
+        self.add_hostname_as(name, hostname, false, author).await
+    }
+
+    /// Attach a hostname to a site. With `primary`, it becomes the site's primary
+    /// hostname (the one links, uptime checks and the admin UI use) and the previous
+    /// primary stays attached as an extra. Making an already attached hostname primary
+    /// is allowed.
+    pub async fn add_hostname_as(
+        &self,
+        name: &str,
+        hostname: &str,
+        primary: bool,
+        author: Author,
+    ) -> Result<()> {
         let site = self.get(name).await?;
+        if primary {
+            let host = normalize_hostname(hostname).ok_or_else(|| {
+                SiteError::Invalid(format!("{hostname:?} is not a valid hostname"))
+            })?;
+            let attached = sqlx::query_scalar!(
+                r#"SELECT count(*) as "n!: i64" FROM site_hostnames WHERE site_id = ?1 AND hostname = ?2"#,
+                site.id,
+                host
+            )
+            .fetch_one(&self.inner.db)
+            .await?;
+            if attached == 0 {
+                Box::pin(self.add_hostname_as(name, &host, false, author)).await?;
+            }
+            let mut tx = self.inner.db.begin().await?;
+            sqlx::query!(
+                "UPDATE site_hostnames SET is_primary = 0 WHERE site_id = ?1",
+                site.id
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query!(
+                "UPDATE site_hostnames SET is_primary = 1 WHERE site_id = ?1 AND hostname = ?2",
+                site.id,
+                host
+            )
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            self.reload_routes().await?;
+            self.audit(author, "site.hostname.primary", name, Some(&host))
+                .await;
+            return Ok(());
+        }
         let host = normalize_hostname(hostname)
             .ok_or_else(|| SiteError::Invalid(format!("{hostname:?} is not a valid hostname")))?;
         if host == self.inner.domains.admin_host() {

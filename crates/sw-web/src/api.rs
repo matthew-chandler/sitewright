@@ -37,6 +37,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
         .route("/v1/sites/{name}/check-domain", get(check_domain))
+        .route(
+            "/v1/sites/{name}/hostnames",
+            post(add_hostname).delete(remove_hostname),
+        )
         .route("/v1/sites/{name}/export", get(export_site))
         .route("/v1/runs", get(list_runs).post(start_run))
         .route("/v1/runs/{id}", get(get_run))
@@ -402,6 +406,39 @@ pub fn run_event_stream(
             return Some((Ok(sse), s));
         }
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostnameBody {
+    hostname: String,
+    /// Make it the site's primary hostname.
+    #[serde(default)]
+    primary: bool,
+}
+
+async fn add_hostname(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<HostnameBody>,
+) -> ApiResult<Json<SiteInfo>> {
+    state
+        .store
+        .add_hostname_as(&name, &body.hostname, body.primary, Author::User)
+        .await?;
+    Ok(Json(state.store.info(&name).await?))
+}
+
+async fn remove_hostname(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<HostnameBody>,
+) -> ApiResult<Json<SiteInfo>> {
+    state
+        .store
+        .remove_hostname(&name, &body.hostname, Author::User)
+        .await?;
+    Ok(Json(state.store.info(&name).await?))
 }
 
 #[derive(Debug, Deserialize)]

@@ -519,6 +519,50 @@ async fn extra_hostnames_route_to_the_same_release() {
             .is_err(),
         "primary stays"
     );
+    // Promote the extra hostname: links use it, and the old primary stays as an extra.
+    env.store
+        .add_hostname_as("s", "blog.other.org", true, Author::User)
+        .await
+        .unwrap();
+    let info = env.store.info("s").await.unwrap();
+    assert_eq!(info.url, "https://blog.other.org");
+    assert_eq!(info.hostnames.iter().filter(|h| h.is_primary).count(), 1);
+    assert_eq!(
+        live_index(&env, "s.example.com").await.as_deref(),
+        Some("hi")
+    );
+    assert!(
+        env.store
+            .remove_hostname("s", "blog.other.org", Author::User)
+            .await
+            .is_err(),
+        "now primary"
+    );
+    // A new hostname can be attached and promoted in one step; then demote back.
+    env.store
+        .add_hostname_as("s", "new.example.net", true, Author::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        env.store.info("s").await.unwrap().url,
+        "https://new.example.net"
+    );
+    assert_eq!(
+        env.store
+            .routes()
+            .get("blog.other.org")
+            .unwrap()
+            .primary_hostname,
+        "new.example.net"
+    );
+    env.store
+        .add_hostname_as("s", "s.example.com", true, Author::User)
+        .await
+        .unwrap();
+    env.store
+        .remove_hostname("s", "new.example.net", Author::User)
+        .await
+        .unwrap();
     env.store
         .remove_hostname("s", "blog.other.org", Author::User)
         .await

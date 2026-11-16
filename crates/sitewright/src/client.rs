@@ -43,6 +43,15 @@ impl AdminClient {
             .await
     }
 
+    pub async fn delete<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<T> {
+        self.finish(self.http.delete(Self::url(path)).json(body))
+            .await
+    }
+
     pub async fn put_bytes<T: DeserializeOwned>(
         &self,
         path: &str,

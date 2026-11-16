@@ -71,6 +71,26 @@ sudo systemctl start sitewright
 5. In standalone mode the certificates come along; they renew from the new server once
    DNS has moved. Passkeys keep working because the admin hostname is unchanged.
 
+## Changing your domain
+
+To move every site from one zone to another (say from `dev.example.com` to `example.com`),
+or to rename the admin hostname:
+
+1. Make the new names reach the server (DNS, and the proxy in front if there is one).
+2. In `config.toml` set `domains.zones`, `domains.admin_host` and, if used,
+   `domains.admin_url`; add `domains.reserved_names` for subdomains other services use.
+   Restart the daemon.
+3. Give each existing site its new address and make it the primary one:
+   ```sh
+   sitewright site hostname add <name> <name>.example.com --primary
+   ```
+   The old hostname stays attached until you remove it.
+4. **Enroll a new passkey**: `sitewright admin invite`. Passkeys are bound to the admin
+   hostname, so ones made for the old hostname stop working when it changes. Remove them
+   in Settings afterwards.
+
+New sites are created in the first zone listed.
+
 ## Updating
 
 ```sh

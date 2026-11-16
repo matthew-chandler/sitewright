@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-16
+
+### Added
+
+- `sitewright site hostname add|remove`, with `--primary` to change a site's main address;
+  the same over the API (`/v1/sites/<name>/hostnames`).
+- `domains.reserved_names`: site names that may not be used, for zones shared with other
+  services.
+- `scripts/vps-production.sh`: adds a wildcard nginx block for Sitewright beside existing
+  sites without modifying them.
+- Documentation for moving to another domain.
+
 ## [1.0.0] - 2026-11-16
 
 The first stable release. It contains everything in 0.9.0, which was published as a
@@ -57,6 +69,7 @@ that the update path to 1.0.0 can be exercised on a real server.
   systemd unit, and export of any site as plain files or a Docker build context.
 - A CLI for every core operation over an owner-only Unix socket.
 
-[Unreleased]: https://github.com/matthew-chandler/sitewright/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/matthew-chandler/sitewright/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/matthew-chandler/sitewright/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/matthew-chandler/sitewright/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/matthew-chandler/sitewright/releases/tag/v0.9.0
