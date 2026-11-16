@@ -49,6 +49,10 @@ impl DataDir {
     pub fn secrets_file(&self) -> PathBuf {
         self.root.join("secrets.toml")
     }
+    /// Secrets that sites' backends may use, entered by the owner.
+    pub fn site_secrets_file(&self) -> PathBuf {
+        self.root.join("site-secrets.toml")
+    }
     pub fn admin_socket(&self) -> PathBuf {
         self.root.join("admin.sock")
     }

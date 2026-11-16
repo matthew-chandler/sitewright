@@ -3874,6 +3874,7 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
  "libsqlite3-sys",
+ "reqwest",
  "rquickjs",
  "rustix",
  "seccompiler",
@@ -3887,6 +3888,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "wiremock",
 ]
 
 [[package]]

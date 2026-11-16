@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM site_hosts WHERE site_id = ?1 AND host = ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b6c7471766c39ae2012c78a24619b7f953dd175af5cf4601a7a019703b814100"
+}

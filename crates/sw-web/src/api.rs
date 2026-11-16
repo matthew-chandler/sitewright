@@ -37,6 +37,16 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sites/{name}/delete", post(delete_site))
         .route("/v1/sites/{name}/restore", post(restore_site))
         .route("/v1/sites/{name}/rename", post(rename_site))
+        .route(
+            "/v1/sites/{name}/secrets",
+            get(list_secrets).post(set_secret).delete(remove_secret),
+        )
+        .route(
+            "/v1/sites/{name}/backend-hosts",
+            get(list_backend_hosts)
+                .post(allow_backend_host)
+                .delete(remove_backend_host),
+        )
         .route("/v1/sites/{name}/title", post(retitle_site))
         .route("/v1/sites/{name}/check-domain", get(check_domain))
         .route(
@@ -271,6 +281,115 @@ async fn delete_site(
     let site = state.store.delete(&name, Author::User).await?;
     state.backend.release(site.id, &site.name).await;
     Ok(Json(site))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretBody {
+    name: String,
+    /// Required to set a secret; ignored when removing one.
+    #[serde(default)]
+    value: String,
+}
+
+/// The names of a site's backend secrets. Values cannot be read back.
+async fn list_secrets(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<Vec<String>>> {
+    let site = state.store.get(&name).await?;
+    state
+        .backend
+        .secret_names(site.id)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn set_secret(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SecretBody>,
+) -> ApiResult<Json<Vec<String>>> {
+    let site = state.store.get(&name).await?;
+    state
+        .backend
+        .set_secret(site.id, &body.name, &body.value)
+        .map_err(ApiError::bad_request)?;
+    state
+        .backend
+        .secret_names(site.id)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn remove_secret(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SecretBody>,
+) -> ApiResult<Json<Vec<String>>> {
+    let site = state.store.get(&name).await?;
+    if !state
+        .backend
+        .remove_secret(site.id, &body.name)
+        .map_err(ApiError::bad_request)?
+    {
+        return Err(ApiError::bad_request(format!(
+            "{name} has no secret named {}",
+            body.name
+        )));
+    }
+    state
+        .backend
+        .secret_names(site.id)
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackendHostBody {
+    host: String,
+}
+
+async fn list_backend_hosts(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<Vec<sw_backend::SiteHostEntry>>> {
+    let site = state.store.get(&name).await?;
+    state
+        .backend
+        .hosts(site.id)
+        .await
+        .map(Json)
+        .map_err(ApiError::bad_request)
+}
+
+async fn allow_backend_host(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<BackendHostBody>,
+) -> ApiResult<Json<Vec<sw_backend::SiteHostEntry>>> {
+    let site = state.store.get(&name).await?;
+    state
+        .backend
+        .approve_host(site.id, &body.host)
+        .await
+        .map_err(ApiError::bad_request)?;
+    list_backend_hosts(State(state), Path(name)).await
+}
+
+async fn remove_backend_host(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<BackendHostBody>,
+) -> ApiResult<Json<Vec<sw_backend::SiteHostEntry>>> {
+    let site = state.store.get(&name).await?;
+    state
+        .backend
+        .remove_host(site.id, &body.host)
+        .await
+        .map_err(ApiError::bad_request)?;
+    list_backend_hosts(State(state), Path(name)).await
 }
 
 fn default_true() -> bool {

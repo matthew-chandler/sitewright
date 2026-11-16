@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO site_hosts (site_id, host, status, reason, created_at) VALUES (?1, ?2, 'requested', ?3, ?4)\n             ON CONFLICT (site_id, host) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f9bcb7b0445506b925139266664bf875aad301da9afe7ee71226ae8152a8bd59"
+}

@@ -31,6 +31,10 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/rollback", post(site_rollback))
         .route("/sites/{name}/delete", post(site_delete))
         .route("/sites/{name}/rename", post(site_rename))
+        .route("/sites/{name}/secrets", post(secret_save))
+        .route("/sites/{name}/secrets/{secret}/delete", post(secret_delete))
+        .route("/sites/{name}/hosts", post(host_approve))
+        .route("/sites/{name}/hosts/{host}/delete", post(host_delete))
         .route("/sites/{name}/export/{format}", get(site_export))
         .route("/sites/{name}/dashboard", get(dashboard_page))
         .route("/sites/{name}/dashboard/data", get(dashboard_data))
@@ -310,6 +314,11 @@ struct SitePage {
     /// The run in progress on this site, if any.
     running_run: Option<i64>,
     backend: Option<BackendView>,
+    /// Names of the secrets stored for this site's backend.
+    secrets: Vec<String>,
+    /// Outside hosts the backend may reach, or has asked to.
+    backend_hosts: Vec<sw_backend::SiteHostEntry>,
+    backends_enabled: bool,
     zone: String,
     /// Hostnames other than the primary one, with a note for those that redirect.
     other_hostnames: Vec<String>,
@@ -592,7 +601,7 @@ async fn site_page(
             .unwrap_or_default(),
         logs: state
             .backend
-            .logs(info.site.id, 30)
+            .logs_redacted(info.site.id, 30)
             .into_iter()
             .rev()
             .map(|line| BackendLogRow {
@@ -605,6 +614,9 @@ async fn site_page(
     });
     render(SitePage {
         chrome,
+        secrets: state.backend.secret_names(info.site.id).unwrap_or_default(),
+        backend_hosts: state.backend.hosts(info.site.id).await.unwrap_or_default(),
+        backends_enabled: state.backend.enabled(),
         backend,
         running_run,
         zone: state.config.domains.default_zone().to_owned(),
@@ -736,6 +748,80 @@ async fn site_rename(
         return error_fragment(e.to_string());
     }
     hx_redirect(&format!("/sites/{new_name}"))
+}
+
+#[derive(Deserialize)]
+struct SecretForm {
+    name: String,
+    value: String,
+}
+
+/// Store a secret for a site's backend. The value is never shown again.
+async fn secret_save(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(form): Form<SecretForm>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    match state
+        .backend
+        .set_secret(site.id, form.name.trim(), form.value.trim())
+    {
+        Ok(()) => hx_refresh(),
+        Err(e) => error_fragment(e),
+    }
+}
+
+async fn secret_delete(
+    State(state): State<AppState>,
+    Path((name, secret)): Path<(String, String)>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    match state.backend.remove_secret(site.id, &secret) {
+        Ok(_) => hx_refresh(),
+        Err(e) => error_fragment(e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct HostForm {
+    host: String,
+}
+
+/// Allow a site's backend to send requests to a host.
+async fn host_approve(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(form): Form<HostForm>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    match state.backend.approve_host(site.id, &form.host).await {
+        Ok(_) => hx_refresh(),
+        Err(e) => error_fragment(e),
+    }
+}
+
+async fn host_delete(
+    State(state): State<AppState>,
+    Path((name, host)): Path<(String, String)>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    match state.backend.remove_host(site.id, &host).await {
+        Ok(_) => hx_refresh(),
+        Err(e) => error_fragment(e),
+    }
 }
 
 async fn site_export(

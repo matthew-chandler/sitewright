@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO site_hosts (site_id, host, status, created_at) VALUES (?1, ?2, 'approved', ?3)\n             ON CONFLICT (site_id, host) DO UPDATE SET status = 'approved'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "c0255862a8687311cbda3e2276d6c34a694e596856849f62b8ff842ae3d70fcb"
+}
