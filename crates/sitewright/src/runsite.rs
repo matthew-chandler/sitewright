@@ -245,3 +245,72 @@ pub async fn run(args: RunSiteArgs) -> anyhow::Result<()> {
     .await
     .context("the server stopped unexpectedly")
 }
+
+/// `sitewright import-data`: put a database downloaded from Sitewright into a packaged
+/// site's data directory, before its first start.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ImportDataArgs {
+    /// The database file downloaded from Sitewright (`<site>-data.db`).
+    pub file: PathBuf,
+    /// The site's manifest.
+    #[arg(long, default_value = "/site.json")]
+    pub manifest: PathBuf,
+    /// The site's data directory (the mounted volume).
+    #[arg(long, default_value = "/data")]
+    pub data_dir: PathBuf,
+    /// Replace data that is already there.
+    #[arg(long)]
+    pub force: bool,
+    /// Give the data to this numeric user and group afterwards, when run as root. The
+    /// packaged site runs as 65532.
+    #[arg(long, default_value_t = 65532)]
+    pub owner: u32,
+}
+
+pub fn import_data(args: &ImportDataArgs) -> anyhow::Result<()> {
+    let manifest: SiteManifest = serde_json::from_slice(
+        &std::fs::read(&args.manifest)
+            .with_context(|| format!("cannot read {}", args.manifest.display()))?,
+    )
+    .context("the manifest is not valid")?;
+    let name = SiteName::parse(&manifest.name).context("the manifest's site name is not valid")?;
+    let header = {
+        use std::io::Read;
+        let mut buf = [0u8; 16];
+        std::fs::File::open(&args.file)
+            .and_then(|mut f| f.read_exact(&mut buf))
+            .with_context(|| format!("cannot read {}", args.file.display()))?;
+        buf
+    };
+    if &header != b"SQLite format 3\0" {
+        bail!("{} is not a database downloaded from Sitewright", args.file.display());
+    }
+    let data = DataDir::new(&args.data_dir);
+    let target = data.site_db(&name);
+    if target.exists() && !args.force {
+        bail!(
+            "{} already has data for this site; pass --force to replace it",
+            args.data_dir.display()
+        );
+    }
+    let dir = data.site_data(&name);
+    std::fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    for suffix in ["-wal", "-shm"] {
+        let mut stale = target.clone().into_os_string();
+        stale.push(suffix);
+        let _ = std::fs::remove_file(stale);
+    }
+    std::fs::copy(&args.file, &target).with_context(|| format!("cannot write {}", target.display()))?;
+    // Run as root (to write into a fresh volume), hand everything to the site's user.
+    let mut pending = vec![args.data_dir.clone()];
+    while let Some(path) = pending.pop() {
+        let _ = std::os::unix::fs::chown(&path, Some(args.owner), Some(args.owner));
+        if path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&path)
+        {
+            pending.extend(entries.flatten().map(|e| e.path()));
+        }
+    }
+    println!("Imported the data of {} into {}.", manifest.name, args.data_dir.display());
+    Ok(())
+}

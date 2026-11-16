@@ -779,6 +779,26 @@ impl SiteBackends {
         self.inner.host.secrets.redact(site_id, text)
     }
 
+    /// Write a consistent copy of the site's live database into `dir`, as
+    /// `<site>-data.db`, replacing an earlier copy. `None` when the site has no
+    /// database.
+    pub async fn snapshot(&self, site: &SiteName, dir: &Path) -> Result<Option<PathBuf>, String> {
+        let live = self.inner.host.db_path(site.as_str(), false)?;
+        if !live.is_file() {
+            return Ok(None);
+        }
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let out = dir.join(format!("{site}-data.db"));
+        remove_db_files(&out);
+        self.inner.host.dbs.get(&live).await?.copy_to(&out).await?;
+        Ok(Some(out))
+    }
+
+    /// Where a site's live database is kept under this data directory.
+    pub fn database_path(&self, site: &SiteName) -> Result<PathBuf, String> {
+        self.inner.host.db_path(site.as_str(), false)
+    }
+
     /// Whether the site has a database, and its size in bytes.
     pub fn database_size(&self, site: &SiteName) -> Option<u64> {
         let path = self.inner.host.db_path(site.as_str(), false).ok()?;

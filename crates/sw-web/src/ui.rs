@@ -35,6 +35,9 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/secrets/{secret}/delete", post(secret_delete))
         .route("/sites/{name}/hosts", post(host_approve))
         .route("/sites/{name}/llm", post(llm_save))
+        .route("/sites/{name}/containerize", post(site_containerize))
+        .route("/sites/{name}/container", get(container_page))
+        .route("/sites/{name}/container/{part}", get(container_part))
         .route("/sites/{name}/hosts/{host}/delete", post(host_delete))
         .route("/sites/{name}/export/{format}", get(site_export))
         .route("/sites/{name}/dashboard", get(dashboard_page))
@@ -372,6 +375,7 @@ struct SitePage {
     /// Outside hosts the backend may reach, or has asked to.
     backend_hosts: Vec<sw_backend::SiteHostEntry>,
     backends_enabled: bool,
+    containerized: bool,
     llm: LlmView,
     zone: String,
     /// Hostnames other than the primary one, with a note for those that redirect.
@@ -565,6 +569,8 @@ struct NewForm {
     prompt: String,
     name: String,
     provider: Option<String>,
+    /// A checkbox: present when ticked.
+    containerize: Option<String>,
 }
 
 async fn new_submit(State(state): State<AppState>, Form(form): Form<NewForm>) -> Response {
@@ -572,6 +578,7 @@ async fn new_submit(State(state): State<AppState>, Form(form): Form<NewForm>) ->
         site: form.name.trim().to_ascii_lowercase(),
         prompt: form.prompt,
         new: true,
+        containerize: form.containerize.is_some(),
         provider: form.provider.filter(|p| !p.is_empty()),
     };
     match state.agent.start(request).await {
@@ -671,6 +678,7 @@ async fn site_page(
         secrets: state.backend.secret_names(info.site.id).unwrap_or_default(),
         backend_hosts: state.backend.hosts(info.site.id).await.unwrap_or_default(),
         backends_enabled: state.backend.enabled(),
+        containerized: state.store.containerized(&name).await.unwrap_or(false),
         llm: llm_view(&state, info.site.id).await,
         backend,
         running_run,
@@ -702,6 +710,7 @@ async fn site_prompt(
         site: name,
         prompt: form.prompt,
         new: false,
+        containerize: false,
         provider: form.provider.filter(|p| !p.is_empty()),
     };
     match state.agent.start(request).await {
@@ -914,6 +923,75 @@ async fn llm_save(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ContainerizeForm {
+    on: String,
+}
+
+/// Turn containerizing on or off for a site. Turning it on leads to the container
+/// page, which shows the setup guide for the site as it is now.
+async fn site_containerize(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(form): Form<ContainerizeForm>,
+) -> Response {
+    let on = form.on == "1";
+    match state.store.set_containerized(&name, on, Author::User).await {
+        Ok(()) if on => hx_redirect(&format!("/sites/{name}/container")),
+        Ok(()) => hx_refresh(),
+        Err(e) => error_fragment(e.to_string()),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "container.html")]
+struct ContainerPage {
+    chrome: Chrome,
+    name: String,
+    title: String,
+    release: String,
+    image_name: String,
+    has_data: bool,
+    /// The setup guide, rendered from Markdown by our own renderer.
+    guide_html: String,
+}
+
+async fn container_page(
+    State(state): State<AppState>,
+    Extension(session): Extension<Session>,
+    Path(name): Path<String>,
+) -> Response {
+    let chrome = Chrome::for_session(&session);
+    let Ok(site) = state.store.get(&name).await else {
+        return not_found(chrome, "site");
+    };
+    match crate::container::describe(&state, &name).await {
+        Ok(package) => render(ContainerPage {
+            chrome,
+            title: site.title,
+            release: package.manifest.release.chars().take(8).collect(),
+            image_name: package.file_name.clone(),
+            has_data: state.backend.database_size(&site.name).is_some(),
+            guide_html: crate::markdown::render(&crate::container::guide(&package)),
+            name,
+        }),
+        Err(message) => render(MessagePage {
+            chrome,
+            title: "Nothing to package yet".into(),
+            message,
+        }),
+    }
+}
+
+async fn container_part(
+    State(state): State<AppState>,
+    Path((name, part)): Path<(String, String)>,
+) -> Response {
+    crate::api::container_download(&state, &name, &part)
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
 async fn site_export(
     State(state): State<AppState>,
     Path((name, format)): Path<(String, String)>,
@@ -1010,6 +1088,7 @@ async fn dashboard_regenerate(State(state): State<AppState>, Path(name): Path<St
                  and save a dashboard with panels specific to it. Do not change the site's files."
             .into(),
         new: false,
+        containerize: false,
         provider: None,
     };
     match state.agent.start(request).await {

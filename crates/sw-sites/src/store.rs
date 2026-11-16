@@ -472,6 +472,43 @@ impl SiteStore {
         Ok((site_name, hostname))
     }
 
+    /// Whether the site is marked as containerized (see `docs/containers.md`).
+    pub async fn containerized(&self, name: &str) -> Result<bool> {
+        let site = self.get(name).await?;
+        Ok(sqlx::query_scalar!(
+            r#"SELECT containerized as "c!: bool" FROM sites WHERE id = ?1"#,
+            site.id
+        )
+        .fetch_one(&self.inner.db)
+        .await?)
+    }
+
+    /// Mark or unmark a site as containerized.
+    pub async fn set_containerized(&self, name: &str, on: bool, author: Author) -> Result<()> {
+        let site = self.get(name).await?;
+        let now = now_ms();
+        sqlx::query!(
+            "UPDATE sites SET containerized = ?1, updated_at = ?2 WHERE id = ?3",
+            on,
+            now,
+            site.id
+        )
+        .execute(&self.inner.db)
+        .await?;
+        self.audit(
+            author,
+            if on {
+                "site.containerize"
+            } else {
+                "site.uncontainerize"
+            },
+            name,
+            None,
+        )
+        .await;
+        Ok(())
+    }
+
     /// Change a site's title.
     pub async fn set_title(&self, name: &str, title: &str, author: Author) -> Result<Site> {
         let site = self.get(name).await?;

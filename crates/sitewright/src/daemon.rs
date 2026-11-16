@@ -137,6 +137,8 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         hasher,
         metrics: metrics.clone(),
         agent,
+        data: data.clone(),
+        program: Arc::new(worker_command()?.program),
         backend: backend.clone(),
         domains,
         providers,

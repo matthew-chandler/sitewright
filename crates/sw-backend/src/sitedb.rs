@@ -148,6 +148,9 @@ impl SiteDb {
             // PRAGMA values cannot be bound; `pages` is a number we computed.
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
                 "PRAGMA max_page_count = {pages};
+                 -- Sorts and temporary indexes stay in memory: a containerized site may
+                 -- have nowhere but its data volume to write.
+                 PRAGMA temp_store = MEMORY;
                  CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE} (
                      name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at INTEGER NOT NULL
                  ) STRICT;

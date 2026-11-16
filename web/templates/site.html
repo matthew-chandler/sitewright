@@ -189,6 +189,28 @@
 {% endif %}
 
 <section>
+  <h2>Container</h2>
+  {% if containerized %}
+  <p class="muted">This site is containerized: an image that runs without Sitewright is ready to download whenever you want to host the site somewhere else.</p>
+  <div class="row">
+    {% if published %}<a class="button primary" href="/sites/{{ name }}/container">Image and setup guide</a>{% else %}<span class="empty">Publish the site first.</span>{% endif %}
+    <form hx-post="/sites/{{ name }}/containerize" hx-target="find .status" hx-disabled-elt="find button">
+      <input type="hidden" name="on" value="0">
+      <button type="submit">Stop containerizing</button>
+      <span class="status"></span>
+    </form>
+  </div>
+  {% else %}
+  <p class="muted">Package this site, with its backend, as a container image that runs on its own, on any server with Docker or Podman. The site keeps running here as well.</p>
+  <form hx-post="/sites/{{ name }}/containerize" hx-target="find .status" hx-disabled-elt="find button">
+    <input type="hidden" name="on" value="1">
+    <button type="submit">Containerize this site</button>
+    <div class="status" aria-live="polite"></div>
+  </form>
+  {% endif %}
+</section>
+
+<section>
   <h2>Export</h2>
   {% if published %}
   <p class="muted">Download the live release to host it somewhere else.{% if backend.is_some() %} The export holds the static files only; the backend runs on Sitewright.{% endif %}</p>

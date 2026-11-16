@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Container · {{ title }} · Sitewright{% endblock %}
+{% block content %}
+<div class="heading">
+  <h1><a href="/sites/{{ name }}">{{ title }}</a> <span class="muted">container</span></h1>
+</div>
+<p class="muted">An image of this site's live release that runs without Sitewright. It is built when you download it, from release <code>{{ release }}</code>, and contains no secrets.</p>
+
+<section>
+  <h2>Downloads</h2>
+  <div class="row">
+    <a class="button primary" href="/sites/{{ name }}/container/image" download>Image ({{ image_name }})</a>
+    <a class="button" href="/sites/{{ name }}/container/guide" download>Setup guide (.md)</a>
+    {% if has_data %}<a class="button" href="/sites/{{ name }}/container/data" download>The site's data (.db)</a>{% endif %}
+  </div>
+  <p class="hint">The image is about 25 MB plus the site's files. After you change the site, download a new image.{% if has_data %} The data file is a copy of the site's database as it is right now, including visitor accounts; keep it private.{% endif %}</p>
+</section>
+
+<section>
+  <h2>Setup guide</h2>
+  <div class="log"><div class="text md">{{ guide_html|safe }}</div></div>
+</section>
+{% endblock %}

@@ -82,6 +82,7 @@ fn request(site: &str, prompt: &str, new: bool) -> RunRequest {
         prompt: prompt.into(),
         new,
         provider: None,
+        containerize: false,
     }
 }
 

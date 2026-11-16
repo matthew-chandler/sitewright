@@ -26,6 +26,8 @@ pub struct ToolContext {
     pub site: String,
     /// Whether the run was started to create `site` (so `create_site` is allowed).
     pub may_create: bool,
+    /// Mark the site as containerized when `create_site` creates it.
+    pub containerize_on_create: bool,
     /// Public HTTP port used by `check_domain`.
     pub http_port: u16,
 }
@@ -321,6 +323,10 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                     return Err(ToolOutcome::error(format!("this conversation can only create the site named {:?}", ctx.site)));
                 }
                 ctx.store.create(name, title, Author::Agent).await.map_err(fail)?;
+                if ctx.containerize_on_create {
+                    // The owner's choice on the "new site" form.
+                    ctx.store.set_containerized(name, true, Author::User).await.map_err(fail)?;
+                }
                 let info = ctx.store.info(name).await.map_err(fail)?;
                 let mut outcome = ToolOutcome::ok(json!({ "created": name, "url": info.url, "next": "write the files, then validate_site and publish_site" }));
                 outcome.effect = Some(Effect::Created);
