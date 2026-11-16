@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- AI models for backends: `llm.chat` goes through the daemon with its credentials. Per
+  site: off by default, a list of allowed models, per-minute and per-month limits, and
+  recorded usage with cost. Managed on the site's page, over the API, or with
+  `sitewright backend ai`.
+- Agent tool `list_models`, so "use the new model" in a prompt can be resolved by name.
+
+### Changed
+
+- Time a backend handler spends waiting for the daemon (queries, outside requests, model
+  calls) no longer counts against its 10-second limit; a request may take 90 seconds in
+  all.
+
 ## [1.5.0] - 2026-11-16
 
 
