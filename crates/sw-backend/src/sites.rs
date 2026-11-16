@@ -21,9 +21,11 @@ use sw_core::config::BackendsConfig;
 use sw_core::{DataDir, SiteName};
 use sw_sites::{ReleaseHooks, ReleasePlan};
 
+use crate::egress::{Egress, FetchRequest, normalize_host};
 use crate::manager::{
     BackendError, BackendRequest, BackendResponse, Backends, Host, Limits, Target, WorkerCommand,
 };
+use crate::secrets::SiteSecrets;
 use crate::sitedb::{DbLimits, Migration, SiteDb, SiteDbs};
 
 /// Console lines kept per site.
@@ -141,6 +143,10 @@ impl BackendSource {
 /// What the worker's host calls and logs are served from.
 struct SiteHost {
     data: DataDir,
+    /// Sitewright's own database, for the per-site list of approved hosts.
+    pool: sqlx::SqlitePool,
+    secrets: SiteSecrets,
+    egress: Egress,
     dbs: SiteDbs,
     logs: Mutex<HashMap<i64, VecDeque<LogLine>>>,
 }
@@ -159,6 +165,87 @@ impl SiteHost {
         self.dbs
             .get(&self.db_path(&target.site, target.draft)?)
             .await
+    }
+}
+
+/// A host on a site's outbound list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SiteHostEntry {
+    pub host: String,
+    /// False while the owner has not approved it yet.
+    pub approved: bool,
+    pub reason: Option<String>,
+}
+
+/// Most hosts waiting for approval per site.
+const MAX_REQUESTED_HOSTS: i64 = 20;
+
+impl SiteHost {
+    async fn host_status(&self, site_id: i64, host: &str) -> Result<Option<String>, String> {
+        sqlx::query_scalar!(
+            "SELECT status FROM site_hosts WHERE site_id = ?1 AND host = ?2",
+            site_id,
+            host
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Record that a site wants to reach `host`. Does nothing if it is already listed.
+    async fn request_host(&self, site_id: i64, host: &str, reason: &str) -> Result<(), String> {
+        let waiting = sqlx::query_scalar!(
+            r#"SELECT count(*) as "n!: i64" FROM site_hosts WHERE site_id = ?1 AND status = 'requested'"#,
+            site_id
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if waiting >= MAX_REQUESTED_HOSTS {
+            return Err("too many hosts are already waiting for the owner's approval".into());
+        }
+        let reason: String = reason.chars().take(300).collect();
+        let now = sw_core::time::now_ms();
+        sqlx::query!(
+            "INSERT INTO site_hosts (site_id, host, status, reason, created_at) VALUES (?1, ?2, 'requested', ?3, ?4)
+             ON CONFLICT (site_id, host) DO NOTHING",
+            site_id,
+            host,
+            reason,
+            now
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn fetch(&self, target: &Target, args: Value) -> Result<Value, String> {
+        let request: FetchRequest =
+            serde_json::from_value(args).map_err(|e| format!("invalid fetch request: {e}"))?;
+        let host = self.egress.target_host(&request.url)?;
+        match self.host_status(target.site_id, &host).await?.as_deref() {
+            Some("approved") => {}
+            Some(_) => {
+                return Err(format!(
+                    "{host} is waiting for the site owner's approval; requests to it are refused until then"
+                ));
+            }
+            None => {
+                let _ = self
+                    .request_host(
+                        target.site_id,
+                        &host,
+                        "the backend tried to reach this host",
+                    )
+                    .await;
+                return Err(format!(
+                    "{host} is not on this site's list of approved hosts; the owner has been asked to approve it"
+                ));
+            }
+        }
+        let response = self.egress.fetch(request).await?;
+        serde_json::to_value(response).map_err(|e| e.to_string())
     }
 }
 
@@ -211,6 +298,19 @@ impl Host for SiteHost {
                     let results = self.db(target).await?.batch(&statements).await?;
                     serde_json::to_value(results).map_err(|e| e.to_string())
                 }
+                "secrets.get" => {
+                    let name = args
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .ok_or("secrets.get takes a name")?;
+                    match self.secrets.get(target.site_id, name)? {
+                        Some(value) => Ok(Value::String(value)),
+                        None => Err(format!(
+                            "this site has no secret named {name}; the owner adds secrets on the site's page"
+                        )),
+                    }
+                }
+                "http.fetch" => self.fetch(target, args).await,
                 other => Err(format!("unknown operation {other}")),
             }
         })
@@ -287,7 +387,24 @@ fn remove_db_files(path: &Path) {
 }
 
 impl SiteBackends {
-    pub fn new(config: &BackendsConfig, data: DataDir, command: WorkerCommand) -> Self {
+    pub fn new(
+        config: &BackendsConfig,
+        data: DataDir,
+        pool: sqlx::SqlitePool,
+        command: WorkerCommand,
+    ) -> Self {
+        Self::with_egress(config, data, pool, command, Egress::new())
+    }
+
+    /// Like [`Self::new`], with a different outbound-request policy. For tests.
+    #[doc(hidden)]
+    pub fn with_egress(
+        config: &BackendsConfig,
+        data: DataDir,
+        pool: sqlx::SqlitePool,
+        command: WorkerCommand,
+        egress: Egress,
+    ) -> Self {
         let limits = Limits {
             request_timeout: Duration::from_secs(config.request_timeout_secs.max(1)),
             memory_bytes: config.memory_mb.max(8) * 1024 * 1024,
@@ -296,6 +413,9 @@ impl SiteBackends {
             ..Limits::default()
         };
         let host = Arc::new(SiteHost {
+            secrets: SiteSecrets::new(data.site_secrets_file()),
+            pool,
+            egress,
             data,
             dbs: SiteDbs::new(DbLimits {
                 max_bytes: config.max_db_mb.max(1) * 1024 * 1024,
@@ -407,11 +527,25 @@ impl SiteBackends {
             .skip(before.min(LOG_LINES))
             .filter(|l| l.draft)
             .collect();
+        // What comes back from here goes to the model: no secret values.
+        let redact = |text: &str| host.secrets.redact(site_id, text);
+        let logs: Vec<LogLine> = logs
+            .into_iter()
+            .map(|l| LogLine {
+                message: redact(&l.message),
+                ..l
+            })
+            .collect();
+        let response = response.map_err(|e| redact(&e));
         match response {
             Ok(response) => Ok(DraftOutcome {
                 status: response.status,
-                headers: response.headers,
-                body: response.body,
+                headers: response
+                    .headers
+                    .into_iter()
+                    .map(|(k, v)| (k, redact(&v)))
+                    .collect(),
+                body: redact(&response.body),
                 logs,
                 migrations_applied,
             }),
@@ -455,6 +589,107 @@ impl SiteBackends {
             .skip(lines.len().saturating_sub(limit))
             .cloned()
             .collect()
+    }
+
+    /// Like [`Self::logs`], with the site's secret values replaced by their names. Use
+    /// this wherever the lines leave the server's own memory.
+    pub fn logs_redacted(&self, site_id: i64, limit: usize) -> Vec<LogLine> {
+        self.logs(site_id, limit)
+            .into_iter()
+            .map(|l| LogLine {
+                message: self.inner.host.secrets.redact(site_id, &l.message),
+                ..l
+            })
+            .collect()
+    }
+
+    /// The names of a site's secrets. Values are never returned.
+    pub fn secret_names(&self, site_id: i64) -> Result<Vec<String>, String> {
+        self.inner.host.secrets.names(site_id)
+    }
+
+    pub fn set_secret(&self, site_id: i64, name: &str, value: &str) -> Result<(), String> {
+        self.inner.host.secrets.set(site_id, name, value)
+    }
+
+    pub fn remove_secret(&self, site_id: i64, name: &str) -> Result<bool, String> {
+        self.inner.host.secrets.remove(site_id, name)
+    }
+
+    /// Forget the secrets of sites that have been purged. Call at start-up and after
+    /// purging.
+    pub async fn prune_secrets(&self) -> Result<usize, String> {
+        let existing = sqlx::query_scalar!(r#"SELECT id as "id!" FROM sites"#)
+            .fetch_all(&self.inner.host.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.inner.host.secrets.retain_sites(&existing)
+    }
+
+    /// The hosts a site's backend may reach or has asked for, approved first.
+    pub async fn hosts(&self, site_id: i64) -> Result<Vec<SiteHostEntry>, String> {
+        let rows = sqlx::query!(
+            "SELECT host, status, reason FROM site_hosts WHERE site_id = ?1 ORDER BY status, host",
+            site_id
+        )
+        .fetch_all(&self.inner.host.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SiteHostEntry {
+                host: r.host,
+                approved: r.status == "approved",
+                reason: r.reason,
+            })
+            .collect())
+    }
+
+    /// Ask the owner to approve a host for a site (what the agent can do).
+    pub async fn request_host(
+        &self,
+        site_id: i64,
+        host: &str,
+        reason: &str,
+    ) -> Result<String, String> {
+        let host = normalize_host(host).ok_or_else(|| {
+            format!("{host:?} is not a host name; give a plain name such as api.example.com")
+        })?;
+        self.inner.host.request_host(site_id, &host, reason).await?;
+        Ok(host)
+    }
+
+    /// Approve a host for a site (the owner's decision).
+    pub async fn approve_host(&self, site_id: i64, host: &str) -> Result<String, String> {
+        let host = normalize_host(host).ok_or_else(|| {
+            format!("{host:?} is not a host name; give a plain name such as api.example.com")
+        })?;
+        let now = sw_core::time::now_ms();
+        sqlx::query!(
+            "INSERT INTO site_hosts (site_id, host, status, created_at) VALUES (?1, ?2, 'approved', ?3)
+             ON CONFLICT (site_id, host) DO UPDATE SET status = 'approved'",
+            site_id,
+            host,
+            now
+        )
+        .execute(&self.inner.host.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(host)
+    }
+
+    /// Remove a host from a site's list, approved or not.
+    pub async fn remove_host(&self, site_id: i64, host: &str) -> Result<bool, String> {
+        let removed = sqlx::query!(
+            "DELETE FROM site_hosts WHERE site_id = ?1 AND host = ?2",
+            site_id,
+            host
+        )
+        .execute(&self.inner.host.pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .rows_affected();
+        Ok(removed > 0)
     }
 
     /// The live database's tables, or an empty list when the site has no database yet.

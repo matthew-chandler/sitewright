@@ -35,7 +35,8 @@ backend/migrations/0001_<what>.sql    database schema, applied in order at publi
   clock, randomness and exiting. It cannot open files, use the network, start processes
   or send signals, and it is started with an empty environment.
 - **Everything else is a request to the daemon**, which knows which site the worker
-  belongs to. Today that is SQL on the site's own database. The worker never sees
+  belongs to: SQL on the site's own database, reading one of the site's secrets, and an
+  HTTPS request to a host approved for the site. The worker never sees
   another site's data, Sitewright's own database, `secrets.toml` or a provider key.
 - **Site SQL is fenced in**: handlers can read and write rows; only migrations can change
   the schema; `ATTACH`, `PRAGMA`, transaction statements and extension loading are
@@ -44,6 +45,47 @@ backend/migrations/0001_<what>.sql    database schema, applied in order at publi
 - **Visitors' addresses are not passed on.** A backend gets `x-sitewright-visitor`, the
   same anonymous, daily-rotating id the metrics use, and none of the `X-Forwarded-For`
   family of headers.
+
+## Secrets and outside services
+
+A backend can call other services over HTTPS, under two controls that only you hold.
+Both are on the site's page under **Backend access**, and in the CLI.
+
+**Secrets** are values such as API keys that a backend reads by name:
+
+```sh
+sitewright backend set-secret hikes WEATHER_API_KEY    # reads the value from standard input
+sitewright backend secrets hikes                       # names only
+sitewright backend remove-secret hikes WEATHER_API_KEY
+```
+
+- They are stored in `<data>/site-secrets.toml` (mode 0600), like provider keys in
+  `secrets.toml`: not in the database, not in the site's repository, not in a log. They
+  are not encrypted on disk; protect the data directory and its backups.
+- A value cannot be read back through the portal, the API or the CLI.
+- The agent sees the names, never a value. Anything that carries backend output back to
+  the model (test results, console lines) has secret values replaced by `[secret NAME]`.
+  This stops accidental exposure; it cannot stop code that deliberately transforms a
+  secret before printing it, so read what the agent wrote before you trust a site with a
+  valuable key.
+- A site's backend, once it has a secret, can send it to any host you approved for that
+  site and can show it to visitors if its code does so. Approve hosts with that in mind.
+
+**Approved hosts** are the only places a backend's `fetch` can reach:
+
+```sh
+sitewright backend allow-host hikes api.open-meteo.com
+sitewright backend hosts hikes
+sitewright backend remove-host hikes api.open-meteo.com
+```
+
+- The agent can ask for a host (it then shows as "requested" with the agent's reason);
+  only you can approve it. Until then requests to it fail.
+- Requests are HTTPS on port 443 to a host name. The daemon resolves the name itself,
+  refuses loopback, private, link-local and other non-public addresses, and connects to
+  the address it checked. Redirects are not followed. A request has 8 seconds and a
+  1 MB text response.
+- Lists are per site: approving a host for one site does nothing for another.
 
 ## Publishing and rolling back
 
@@ -90,8 +132,8 @@ be published.
 
 ## What backends cannot do yet
 
-Calling other services, stored secrets, visitor accounts, LLM access, scheduled jobs,
-binary uploads and npm packages. The first four are on the [roadmap](ROADMAP.md).
+Visitor accounts, LLM access through Sitewright, scheduled jobs, binary uploads and npm
+packages. The first two are on the [roadmap](ROADMAP.md).
 
 ## Backups
 

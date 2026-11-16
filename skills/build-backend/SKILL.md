@@ -19,8 +19,10 @@ The code runs in Sitewright's own small JavaScript runtime, not in Node, Deno or
 browser. This shapes everything:
 
 - **Only the `sitewright` module exists.** No `npm` packages, no `require`, no `fs`, no
-  `process`, no `fetch`, no timers (`setTimeout`), no `Buffer`, no `URL` class. Standard
-  JavaScript (ES2023: `JSON`, `Math`, `Date`, `Map`, `RegExp`, `async`/`await`) works.
+  `process`, no timers (`setTimeout`), no `Buffer`, no `URL` class. Standard JavaScript
+  (ES2023: `JSON`, `Math`, `Date`, `Map`, `RegExp`, `async`/`await`) works.
+- **`fetch` reaches only hosts the owner approved**, over HTTPS, and the owner's API keys
+  are read by name with `secrets.get`. See "Calling other services" below.
 - **You can import your own files** with relative paths: `import { x } from "./lib/x.js"`.
 - **One database per site**, SQLite, reached through `db`. It is the only place to keep
   data. Variables in memory are lost whenever the server restarts the backend, which is
@@ -88,8 +90,42 @@ Start from `assets/index.js` and `assets/0001_create_entries.sql`.
   and a stack trace in `backend_logs`, which is what you want.
 - Changing data in two steps that must both happen? Use `db.batch`.
 
+## Calling other services
+
+A backend can call an outside HTTPS API, with two things only the site's owner controls:
+
+- **Approved hosts.** `fetch` works only for hosts on the site's list. Call
+  `backend_access` to see the list. If the host you need is missing, call
+  `request_backend_host` with the bare host name (`api.example.com`) and a one-sentence
+  reason. You cannot approve it. Build and publish the feature anyway, make the page
+  show a friendly "not available yet" message when the call fails, and say in your
+  summary that the owner must approve the host on the site's page before it works.
+- **Secrets.** API keys are stored by the owner under a name such as `WEATHER_API_KEY`.
+  `backend_access` lists the names. Read one inside a handler with
+  `await secrets.get("WEATHER_API_KEY")`. If the key you need is not there, pick a clear
+  name, use it in the code, and tell the owner in your summary to add a secret with
+  exactly that name on the site's page. Never ask for the value, never write a key into
+  a file, and never log a secret or send it to the browser. You will only ever see
+  `[secret NAME]` in test output.
+
+Rules for outbound calls:
+
+- Keep keys on the server: the page calls your `/api/...` route, and your route calls
+  the outside service. Never put a key in a page or its JavaScript.
+- A call has 8 seconds and the handler 10, so make one call per request, not a chain.
+- Check `res.ok` and handle failure: answer 502 with a short message rather than
+  passing the other service's error text through.
+- Responses are text up to 1 MB. Redirects are not followed.
+- Do not call an outside service on every page view if the answer changes slowly: store
+  it in the database with a timestamp and reuse it for a few minutes.
+- Visitors can reach your route as often as they like. If the outside service costs
+  money per call, limit calls per visitor (see the template's rate limit) and cache.
+
+`test_backend` makes real outbound calls with the real secrets, so test sparingly
+against services that charge or that change data.
+
 ## When the user asks for something backends cannot do yet
 
-Calling other web services, sending email, user accounts with passwords, file uploads
-and scheduled jobs are not available yet. Say so plainly in your summary, and build the
-part that is possible.
+User accounts with passwords, sending email (unless through an HTTPS API the owner
+approves), file uploads and scheduled jobs are not available yet. Say so plainly in your
+summary, and build the part that is possible.

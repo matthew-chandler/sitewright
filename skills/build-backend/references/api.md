@@ -1,7 +1,7 @@
 # The `sitewright` module
 
 ```js
-import { Router, json, text, html, redirect, HttpError, db, log, crypto } from "sitewright";
+import { Router, json, text, html, redirect, HttpError, db, secrets, fetch, log, crypto } from "sitewright";
 ```
 
 ## Router
@@ -94,6 +94,27 @@ await db.batch([                                                         // one 
 - A constraint violation (for example `UNIQUE`) throws; catch it when it is an expected
   outcome, such as "already voted", and answer 409.
 
+## Secrets and outbound requests
+
+```js
+const key = await secrets.get("WEATHER_API_KEY");   // throws if the owner has not added it
+
+const res = await fetch("https://api.example.com/v1/forecast?city=Seattle", {
+  method: "GET",                                     // GET, POST, PUT, PATCH, DELETE, HEAD
+  headers: { authorization: `Bearer ${key}` },
+  // body: { any: "object" }  → sent as JSON;  body: "text" → sent as is
+});
+if (!res.ok) throw new HttpError(502, "The weather service is not answering.");
+const data = await res.json();                       // or await res.text()
+res.status; res.headers.get("content-type");
+```
+
+- `fetch` throws when the host is not approved for this site, the request times out
+  (8 seconds), the response is larger than 1 MB or is not text.
+- Only `https://` URLs on the standard port, by host name. Redirects are returned to
+  you (`res.status` 301/302 with a `location` header), not followed.
+- `backend_access` shows which hosts are approved and which secret names exist.
+
 ## Logging and randomness
 
 ```js
@@ -104,5 +125,5 @@ crypto.randomHex(16);             // 32 hex characters
 
 ## Not available
 
-`fetch`, timers, `URL`, `TextEncoder`, `Buffer`, `require`, Node and browser APIs, npm
+Timers, `URL`, `TextEncoder`, `Buffer`, `require`, Node and browser APIs, npm
 packages, reading or writing files, environment variables.

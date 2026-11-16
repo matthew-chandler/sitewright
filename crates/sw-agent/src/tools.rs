@@ -207,6 +207,22 @@ pub fn definitions() -> Vec<ToolDef> {
             ),
         ),
         def(
+            "backend_access",
+            "What this site's backend may use beyond its database: the NAMES of the secrets the owner stored (never their values) and the outside hosts it may send requests to, with whether the owner has approved each.",
+            none(),
+        ),
+        def(
+            "request_backend_host",
+            "Ask the site's owner to allow the backend to send HTTPS requests to an outside host. The owner approves it on the site's page; until then requests to it fail. You cannot approve it yourself.",
+            schema(
+                json!({
+                    "host": { "type": "string", "description": "A host name such as api.example.com (no scheme, path or port)" },
+                    "reason": { "type": "string", "description": "One sentence for the owner: what the site uses this host for" },
+                }),
+                &["host", "reason"],
+            ),
+        ),
+        def(
             "backend_schema",
             "The tables, indexes and views of this site's LIVE database, as CREATE statements, and its size. Empty until a backend with migrations has been published.",
             none(),
@@ -427,7 +443,40 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
                 let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200) as usize;
                 let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
-                ToolOutcome::ok(json!({ "lines": backends.logs(site.id, limit) }))
+                // Secret values are replaced by their names before the model sees a line.
+                ToolOutcome::ok(json!({ "lines": backends.logs_redacted(site.id, limit) }))
+            }
+            "backend_access" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                ToolOutcome::ok(json!({
+                    "secrets": backends.secret_names(site.id).map_err(ToolOutcome::error)?,
+                    "hosts": backends.hosts(site.id).await.map_err(ToolOutcome::error)?,
+                    "note": "Read a secret in a handler with `await secrets.get(\"NAME\")`. Only the owner can add secrets or approve hosts, on the site's page in the portal.",
+                }))
+            }
+            "request_backend_host" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let host = backends
+                    .request_host(site.id, required("host")?, required("reason")?)
+                    .await
+                    .map_err(ToolOutcome::error)?;
+                let approved = backends
+                    .hosts(site.id)
+                    .await
+                    .map_err(ToolOutcome::error)?
+                    .iter()
+                    .any(|h| h.host == host && h.approved);
+                ToolOutcome::ok(json!({
+                    "host": host,
+                    "approved": approved,
+                    "next": if approved {
+                        "already approved; fetch will work"
+                    } else {
+                        "waiting for the owner; tell them in your summary to approve this host on the site's page, and that the feature will not work until they do"
+                    },
+                }))
             }
             "backend_schema" => {
                 let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
@@ -531,6 +580,8 @@ mod tests {
                 "save_dashboard",
                 "test_backend",
                 "backend_logs",
+                "backend_access",
+                "request_backend_host",
                 "backend_schema",
                 "load_skill",
                 "read_skill_file",

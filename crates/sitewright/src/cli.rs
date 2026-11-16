@@ -47,6 +47,9 @@ pub enum Command {
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
+    /// Manage what a site's backend may use: secrets and outside hosts.
+    #[command(subcommand)]
+    Backend(BackendCommand),
     /// Administer the daemon.
     #[command(subcommand)]
     Admin(AdminCommand),
@@ -154,6 +157,23 @@ pub enum SiteCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum BackendCommand {
+    /// List the names of a site's secrets. Values cannot be read back.
+    Secrets { site: String },
+    /// Store a secret for a site's backend. The value is read from standard input, so
+    /// it does not end up in your shell history.
+    SetSecret { site: String, name: String },
+    /// Remove a secret.
+    RemoveSecret { site: String, name: String },
+    /// List the outside hosts a site's backend may reach or has asked for.
+    Hosts { site: String },
+    /// Allow a site's backend to send HTTPS requests to a host.
+    AllowHost { site: String, host: String },
+    /// Remove a host from a site's list.
+    RemoveHost { site: String, host: String },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum HostnameCommand {
     /// Serve the site on another hostname too.
     Add {
@@ -178,6 +198,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => crate::setup::init(&loaded, args),
         Command::Doctor => crate::setup::doctor(&loaded).await,
         Command::Site(command) => site(&loaded, command).await,
+        Command::Backend(command) => backend(&loaded, command).await,
         Command::Admin(AdminCommand::Invite) => {
             let client = AdminClient::new(&loaded.data_dir)?;
             let invite: Value = client.post("/v1/admin/invite", &json!({})).await?;
@@ -453,4 +474,92 @@ fn str_of(value: &Value) -> &str {
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
+}
+
+async fn backend(loaded: &Loaded, command: BackendCommand) -> anyhow::Result<()> {
+    let client = AdminClient::new(&loaded.data_dir)?;
+    let print_secrets = |names: &Value| {
+        let names: Vec<&str> = names
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if names.is_empty() {
+            println!("No secrets.");
+        }
+        for name in names {
+            println!("{name}");
+        }
+    };
+    let print_hosts = |hosts: &Value| {
+        let hosts = hosts.as_array().cloned().unwrap_or_default();
+        if hosts.is_empty() {
+            println!("No hosts.");
+        }
+        for host in hosts {
+            let status = if host["approved"] == true {
+                "approved"
+            } else {
+                "requested"
+            };
+            println!("{:<40} {status}", str_of(&host["host"]));
+        }
+    };
+    match command {
+        BackendCommand::Secrets { site } => {
+            let names: Value = client.get(&format!("/v1/sites/{site}/secrets")).await?;
+            print_secrets(&names);
+        }
+        BackendCommand::SetSecret { site, name } => {
+            use std::io::{BufRead, IsTerminal};
+            if std::io::stdin().is_terminal() {
+                eprint!("Value for {name} (it will be visible as you type): ");
+            }
+            let mut value = String::new();
+            std::io::stdin().lock().read_line(&mut value)?;
+            let value = value.trim_end_matches(['\n', '\r']);
+            let names: Value = client
+                .post(
+                    &format!("/v1/sites/{site}/secrets"),
+                    &json!({ "name": name, "value": value }),
+                )
+                .await?;
+            print_secrets(&names);
+        }
+        BackendCommand::RemoveSecret { site, name } => {
+            let names: Value = client
+                .delete(
+                    &format!("/v1/sites/{site}/secrets"),
+                    &json!({ "name": name }),
+                )
+                .await?;
+            print_secrets(&names);
+        }
+        BackendCommand::Hosts { site } => {
+            let hosts: Value = client
+                .get(&format!("/v1/sites/{site}/backend-hosts"))
+                .await?;
+            print_hosts(&hosts);
+        }
+        BackendCommand::AllowHost { site, host } => {
+            let hosts: Value = client
+                .post(
+                    &format!("/v1/sites/{site}/backend-hosts"),
+                    &json!({ "host": host }),
+                )
+                .await?;
+            print_hosts(&hosts);
+        }
+        BackendCommand::RemoveHost { site, host } => {
+            let hosts: Value = client
+                .delete(
+                    &format!("/v1/sites/{site}/backend-hosts"),
+                    &json!({ "host": host }),
+                )
+                .await?;
+            print_hosts(&hosts);
+        }
+    }
+    Ok(())
 }

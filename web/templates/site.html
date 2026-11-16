@@ -98,6 +98,74 @@
 </section>
 {% endif %}
 
+{% if backends_enabled %}
+<section>
+  <h2>Backend access</h2>
+  <details{% if !secrets.is_empty() || !backend_hosts.is_empty() %} open{% endif %}>
+    <summary>Secrets and outside hosts</summary>
+    <h3>Secrets</h3>
+    <p class="muted">API keys and other values this site's backend can read by name. A value is never shown again after you save it, and the agent only sees the names.</p>
+    {% if !secrets.is_empty() %}
+    <ul class="list">
+      {% for s in secrets %}
+      <li>
+        <code>{{ s }}</code>
+        <form hx-post="/sites/{{ name }}/secrets/{{ s }}/delete" hx-target="find .status" hx-confirm="Remove the secret {{ s }}?" hx-disabled-elt="find button">
+          <button type="submit">Remove</button>
+          <span class="status"></span>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form hx-post="/sites/{{ name }}/secrets" hx-target="find .status" hx-disabled-elt="find button">
+      <label for="secret-name">Name</label>
+      <input id="secret-name" name="name" required maxlength="64" pattern="[A-Z][A-Z0-9_]*" placeholder="WEATHER_API_KEY"
+             autocapitalize="characters" autocomplete="off" spellcheck="false">
+      <label for="secret-value">Value</label>
+      <input id="secret-value" name="value" type="password" required autocomplete="off">
+      <button type="submit">Save secret</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+
+    <h3>Outside hosts</h3>
+    <p class="muted">The backend can send HTTPS requests only to hosts you approve here.</p>
+    {% if !backend_hosts.is_empty() %}
+    <ul class="list">
+      {% for h in backend_hosts %}
+      <li>
+        <div>
+          <code>{{ h.host }}</code>
+          {% if h.approved %}<span class="badge succeeded">approved</span>{% else %}<span class="badge running">requested</span>{% endif %}
+          {% if let Some(reason) = h.reason %}<br><span class="muted">{{ reason }}</span>{% endif %}
+        </div>
+        <span class="row">
+          {% if !h.approved %}
+          <form hx-post="/sites/{{ name }}/hosts" hx-target="find .status" hx-disabled-elt="find button">
+            <input type="hidden" name="host" value="{{ h.host }}">
+            <button class="primary" type="submit">Approve</button>
+            <span class="status"></span>
+          </form>
+          {% endif %}
+          <form hx-post="/sites/{{ name }}/hosts/{{ h.host }}/delete" hx-target="find .status" hx-disabled-elt="find button">
+            <button type="submit">Remove</button>
+            <span class="status"></span>
+          </form>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <form hx-post="/sites/{{ name }}/hosts" hx-target="find .status" hx-disabled-elt="find button">
+      <label for="host-name">Allow a host</label>
+      <input id="host-name" name="host" required placeholder="api.example.com" autocapitalize="none" autocomplete="off" spellcheck="false">
+      <button type="submit">Allow</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+  </details>
+</section>
+{% endif %}
+
 <section>
   <h2>Export</h2>
   {% if published %}

@@ -158,8 +158,9 @@ survives a restart, and rolls back cleanly.
 
 ### 1.5 Backends: secrets and visitor login
 
-- **Site secrets.** You add them in the portal (name and value). They are encrypted
-  with the existing master key. The agent sees names only, and values are never shown
+- **Site secrets.** You add them in the portal (name and value). They are stored
+  like provider keys, in a file only the daemon's user can read (there is no master
+  key to encrypt them with; an earlier draft of this roadmap said otherwise). The agent sees names only, and values are never shown
   again, never written to the repository, and never sent to a model.
 - **Outbound requests.** `fetch` works only for hosts on the site's allow-list. When
   the agent needs a new host it raises a request that you approve in the portal, the

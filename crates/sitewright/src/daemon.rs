@@ -101,7 +101,12 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         .await
         .context("cannot open the metrics sandbox")?;
     let providers = Providers::new(config.clone(), db.clone(), data.secrets_file());
-    let backend = sw_backend::SiteBackends::new(&config.backends, data.clone(), worker_command()?);
+    let backend = sw_backend::SiteBackends::new(
+        &config.backends,
+        data.clone(),
+        db.clone(),
+        worker_command()?,
+    );
     store.set_release_hooks(Arc::new(backend.clone()));
     let agent = Agent::new(
         store.clone(),
@@ -227,17 +232,24 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     }));
 
     let token = cancel.clone();
+    let purge_backends = backend.clone();
     let purge_store = store.clone();
     servers.push(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tokio::select! {
                 _ = token.cancelled() => return,
-                _ = ticker.tick() => match purge_store.purge_expired().await {
-                    Ok(purged) if !purged.is_empty() => tracing::info!(?purged, "purged deleted sites"),
-                    Ok(_) => {}
-                    Err(error) => tracing::error!(%error, "purging deleted sites failed"),
-                },
+                _ = ticker.tick() => {
+                    match purge_store.purge_expired().await {
+                        Ok(purged) if !purged.is_empty() => tracing::info!(?purged, "purged deleted sites"),
+                        Ok(_) => {}
+                        Err(error) => tracing::error!(%error, "purging deleted sites failed"),
+                    }
+                    // Runs at start-up too (the first tick is immediate).
+                    if let Err(error) = purge_backends.prune_secrets().await {
+                        tracing::error!(%error, "removing the secrets of purged sites failed");
+                    }
+                }
             }
         }
     }));

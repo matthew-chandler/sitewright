@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT host, status, reason FROM site_hosts WHERE site_id = ?1 ORDER BY status, host",
+  "describe": {
+    "columns": [
+      {
+        "name": "host",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hosts",
+            "name": "host"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hosts",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "reason",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_hosts",
+            "name": "reason"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "c75cde3907243ab12ebea511679913ab42be7bd37a32d99fcbeea93a47795d19"
+}

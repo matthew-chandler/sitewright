@@ -330,6 +330,55 @@ export const db = {
   },
 };
 
+// ---------------------------------------------------------------- secrets and outbound requests
+
+/**
+ * Secrets the site's owner stored for this site, by name. Never log or return a value.
+ */
+export const secrets = {
+  async get(name) {
+    return call("secrets.get", { name });
+  },
+};
+
+class FetchResponse {
+  constructor(raw) {
+    this.status = raw.status;
+    this.ok = raw.status >= 200 && raw.status < 300;
+    this.headers = new Headers(raw.headers);
+    this._body = raw.body;
+  }
+  async text() {
+    return this._body;
+  }
+  async json() {
+    return JSON.parse(this._body);
+  }
+}
+
+/**
+ * Request an https:// URL on a host the site's owner has approved. Redirects are not
+ * followed. Throws when the host is not approved, or the request fails or times out.
+ */
+export async function fetch(url, init = {}) {
+  let body = init.body;
+  const headers = new Headers(init.headers);
+  if (body !== undefined && body !== null && typeof body !== "string") {
+    body = body instanceof URLSearchParams ? body.toString() : JSON.stringify(body);
+    if (!headers.has("content-type")) {
+      headers.set("content-type", init.body instanceof URLSearchParams ? "application/x-www-form-urlencoded" : "application/json");
+    }
+  }
+  const raw = call("http.fetch", {
+    url: String(url),
+    method: init.method || "GET",
+    headers: headers._list,
+    body: body === undefined ? null : body,
+  });
+  return new FetchResponse(raw);
+}
+globalThis.fetch = fetch;
+
 // ---------------------------------------------------------------- dispatch
 
 function normalise(result) {

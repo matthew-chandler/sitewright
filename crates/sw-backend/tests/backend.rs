@@ -428,7 +428,6 @@ export default app;
     for forbidden in [
         "require",
         "process",
-        "fetch",
         "std",
         "os",
         "Deno",

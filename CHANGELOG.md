@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Backend secrets: the owner stores API keys per site (portal, API, or
+  `sitewright backend set-secret`); a backend reads them by name with `secrets.get`. The
+  agent sees names only, and secret values are redacted from everything it is shown.
+- Outbound requests from backends: `fetch` to HTTPS hosts the owner approved for the
+  site. The daemon makes the request, to public addresses only, without following
+  redirects. The agent can request a host with `request_backend_host`; only the owner can
+  approve it.
+- Agent tool `backend_access` lists a site's secret names and hosts.
+
 ## [1.4.0] - 2026-11-16
 
 ### Added

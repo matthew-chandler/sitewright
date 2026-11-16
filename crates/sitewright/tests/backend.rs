@@ -409,3 +409,119 @@ async fn the_agent_builds_tests_and_publishes_a_backend() {
 
     t.daemon.shutdown().await;
 }
+
+#[tokio::test]
+async fn secrets_and_hosts_are_managed_by_the_owner_and_only_named_to_the_agent() {
+    use common::{llm_config, mock_model, text_turn, tool_turn, write_secrets};
+
+    let model = mock_model(vec![
+        tool_turn("backend_access", json!({})),
+        tool_turn(
+            "request_backend_host",
+            json!({"host": "https://api.weather.test/v1", "reason": "x"}),
+        ),
+        tool_turn(
+            "request_backend_host",
+            json!({"host": "api.weather.test", "reason": "Forecasts for the front page"}),
+        ),
+        tool_turn(
+            "request_backend_host",
+            json!({"host": "api.partner.test", "reason": "Already allowed"}),
+        ),
+        tool_turn("backend_access", json!({})),
+        text_turn("Please approve api.weather.test."),
+    ])
+    .await;
+    let t = common::boot_with(&llm_config(&model)).await;
+    write_secrets(&t);
+    let dir = t.site_dir("v1", &[("index.html", INDEX)]);
+    t.cli(&["site", "import", "shop", path_str(&dir)])
+        .await
+        .unwrap();
+    let admin = t.admin();
+
+    // The owner stores a secret and allows a host.
+    let names: Value = admin
+        .post(
+            "/v1/sites/shop/secrets",
+            &json!({"name": "PARTNER_KEY", "value": "pk-live-abcdef123456"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(names, json!(["PARTNER_KEY"]));
+    assert!(
+        admin
+            .post::<Value>(
+                "/v1/sites/shop/secrets",
+                &json!({"name": "lowercase", "value": "x"})
+            )
+            .await
+            .is_err()
+    );
+    t.cli(&["backend", "allow-host", "shop", "API.Partner.test"])
+        .await
+        .unwrap();
+    assert!(
+        t.cli(&["backend", "allow-host", "shop", "10.0.0.5"])
+            .await
+            .is_err()
+    );
+    t.cli(&["backend", "secrets", "shop"]).await.unwrap();
+
+    // The value is on disk in the secrets file only, readable by the owner alone.
+    use std::os::unix::fs::PermissionsExt;
+    let file = t.daemon.data.site_secrets_file();
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("pk-live-abcdef123456")
+    );
+
+    // The agent sees names and hosts, can ask for a host, and cannot approve one.
+    t.cli(&["prompt", "shop", "show the weather"])
+        .await
+        .unwrap();
+    let results = tool_results(&t, 1).await;
+    let outcome: Vec<bool> = results.iter().map(|(_, error, _)| *error).collect();
+    assert_eq!(outcome, [false, true, false, false, false], "{results:#?}");
+    assert_eq!(results[0].2["secrets"], json!(["PARTNER_KEY"]));
+    assert_eq!(results[2].2["approved"], false);
+    assert_eq!(results[3].2["approved"], true);
+    let hosts = &results[4].2["hosts"];
+    assert_eq!(
+        hosts,
+        &json!([
+            {"host": "api.partner.test", "approved": true, "reason": null},
+            {"host": "api.weather.test", "approved": false, "reason": "Forecasts for the front page"},
+        ])
+    );
+    let everything = serde_json::to_string(&results).unwrap();
+    assert!(!everything.contains("pk-live-abcdef123456"));
+
+    // Removing works, and the lists are per site.
+    let hosts: Value = admin
+        .delete(
+            "/v1/sites/shop/backend-hosts",
+            &json!({"host": "api.weather.test"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hosts.as_array().unwrap().len(), 1);
+    let names: Value = admin
+        .delete("/v1/sites/shop/secrets", &json!({"name": "PARTNER_KEY"}))
+        .await
+        .unwrap();
+    assert_eq!(names, json!([]));
+    assert!(
+        admin
+            .delete::<Value>("/v1/sites/shop/secrets", &json!({"name": "PARTNER_KEY"}))
+            .await
+            .is_err()
+    );
+
+    t.daemon.shutdown().await;
+}
