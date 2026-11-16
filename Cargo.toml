@@ -20,6 +20,7 @@ sw-tls = { path = "crates/sw-tls", version = "1.6.0" }
 sw-metrics = { path = "crates/sw-metrics", version = "1.6.0" }
 sw-update = { path = "crates/sw-update", version = "1.6.0" }
 sw-backend = { path = "crates/sw-backend", version = "1.6.0" }
+sw-image = { path = "crates/sw-image", version = "1.6.0" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
