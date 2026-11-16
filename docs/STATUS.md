@@ -3,22 +3,50 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-16 (v1.0.0 released; all milestones done)_
+_Last updated: 2026-11-16 (v1.0.0 released; moved to *.machandler.com, waiting on the nginx block)_
 
 ## Needs from Matthew
 
-Nothing blocks. Optional:
+1. **Add the nginx block for `*.machandler.com` (needs sudo).** Everything else for the
+   move to `*.machandler.com` and `sitewright.machandler.com` is done; this is the last
+   step. Your existing sites keep their own server blocks (exact names win over the
+   wildcard) and no existing file is changed.
 
-1. **Keep an offline copy of the release signing key**: `~/.config/sitewright-release/`
-   on the WSL machine (`minisign.key`, `minisign.password`). Whoever holds both can sign
-   updates that every installation accepts.
-2. **Screenshots or a GIF** of the phone flow for the README; the agent has no browser.
-3. **`.claude/settings.json`**: contents in
-   [development.md](development.md#claude-code-permissions).
-4. **Turn Cloudflare's proxy back on** for `sitewright-dev` if you want it; it returned
-   error 525 while proxied even with a valid origin certificate. Re-running the updated
-   `scripts/vps-bootstrap.sh` aligns that nginx block's TLS settings with your other sites;
-   if 525 persists, `sudo tail -n 5 /var/log/nginx/error.log` names the cause.
+   ```sh
+   # from WSL
+   scp ~/projects/sitewright/scripts/vps-production.sh <your sudo user>@<vps>:/tmp/
+   # on the VPS: look at the dry run, then run it
+   sudo /tmp/vps-production.sh --like /etc/nginx/sites-enabled/fireworks.machandler.com --dry-run
+   sudo /tmp/vps-production.sh --like /etc/nginx/sites-enabled/fireworks.machandler.com
+   ```
+
+   It asks certbot for a certificate for `sitewright.machandler.com` and writes one file,
+   `/etc/nginx/sites-available/sitewright`. Two things change for visitors:
+   `www.machandler.com` and any other subdomain without its own block now get Sitewright's
+   "no site at this address" page instead of nginx's default site (today that is the `api`
+   block).
+
+2. **Enroll a new passkey** for the new admin address (passkeys are bound to the
+   hostname, so the one made for `sitewright-dev` no longer applies). On the VPS as
+   devtest:
+
+   ```sh
+   ~/bin/sitewright --data-dir ~/sitewright-data admin invite
+   ```
+
+   Open the printed `https://sitewright.machandler.com/enroll/...` link on your phone,
+   then remove the old passkey under Settings, and re-add the app to the home screen.
+
+3. **Optional clean-up, once you are happy:** remove the old dev names
+   (`sitewright site hostname remove hikes hikes.dev.machandler.com`, same for `smoke`),
+   delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
+   `*.dev` and `sitewright-dev` DNS records.
+
+4. **Optional: publish 1.1.0** (`main` is at 1.1.0; the VPS runs a build of it):
+   `git tag -a v1.1.0 -m "Sitewright 1.1.0" && git push origin v1.1.0`.
+
+5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
+   screenshots, `.claude/settings.json`.
 
 ## Milestones
 
@@ -105,9 +133,22 @@ Nothing blocks. Optional:
   service came back as 1.0.0; `update --rollback` returned it to 0.9.0; a second `update`
   returned it to 1.0.0. `doctor` was clean after every step and the sites stayed up.
 
+- **Move to `*.machandler.com` (2026-11-16):** the VPS config now has
+  `zones = ["machandler.com"]`, admin host `sitewright.machandler.com`, HTTPS links, proxy
+  mode, and the names of the other services on that zone reserved. `hikes` and `smoke`
+  have `<name>.machandler.com` as their primary hostname; their `.dev` names stay attached
+  for now. A proxied `*.machandler.com` wildcard already existed in Cloudflare, so no DNS
+  change was needed. The previous config is `config.toml.bak-dev-zone` on the VPS.
+  Version 1.1.0 adds what this needed: `site hostname add|remove`, `reserved_names`,
+  `scripts/vps-production.sh`, and a fix for a rare "database is locked" error.
+- The likely cause of the earlier Cloudflare 525: unknown subdomains already work through
+  Cloudflare via nginx's default block, and the one block that failed
+  (`sitewright-dev`) is the only one without
+  `include /etc/letsencrypt/options-ssl-nginx.conf;`. The new block includes it.
+
 ## In progress
 
-- Nothing. v1 is complete.
+- Waiting on Needs #1 to finish the move to `*.machandler.com`.
 
 ## Not done, by choice or by circumstance
 
