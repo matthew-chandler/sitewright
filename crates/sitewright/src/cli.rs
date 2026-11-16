@@ -44,6 +44,9 @@ pub enum Command {
     Init(crate::setup::InitArgs),
     /// Check the installation and report anything that needs attention.
     Doctor,
+    /// Serve one packaged site on its own, without the daemon. This is what a
+    /// containerized site runs; see docs/containers.md.
+    RunSite(crate::runsite::RunSiteArgs),
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
@@ -207,6 +210,11 @@ pub enum HostnameCommand {
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    // A packaged site has no configuration file and no daemon to talk to.
+    if let Command::RunSite(args) = cli.command {
+        init_tracing();
+        return crate::runsite::run(args).await;
+    }
     let loaded = Config::load(cli.global.config.as_deref(), cli.global.data_dir.as_deref())?;
     match cli.command {
         Command::Serve { listen } => {
@@ -214,6 +222,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let daemon = crate::daemon::start(loaded, listen).await?;
             daemon.run_until_signal().await
         }
+        Command::RunSite(_) => unreachable!("handled before the configuration is loaded"),
         Command::Init(args) => crate::setup::init(&loaded, args),
         Command::Doctor => crate::setup::doctor(&loaded).await,
         Command::Site(command) => site(&loaded, command).await,

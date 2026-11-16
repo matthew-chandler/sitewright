@@ -45,23 +45,14 @@ pub async fn serve(
 
     let visitor_hash = state.hasher.hash(ip, &user_agent, route.site_id);
 
-    let is_api = path == "/api" || path.starts_with("/api/");
-    let mut response = if sw_sites::confine::is_backend_path(path.trim_start_matches('/')) {
-        // Backend source and migrations are part of the release but never served.
-        StatusCode::NOT_FOUND.into_response()
-    } else if is_api && route.backend && state.backend.enabled() {
-        backend_response(state, &route, request, &visitor_hash).await
-    } else if method == Method::GET || method == Method::HEAD {
-        serve_file(&route.root, request).await
-    } else {
-        (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [(header::ALLOW, "GET, HEAD")],
-            "method not allowed\n",
-        )
-            .into_response()
+    let release = Release {
+        site_id: route.site_id,
+        site: &route.site,
+        sha: &route.sha,
+        root: &route.root,
+        backend: route.backend,
     };
-    apply_headers(response.headers_mut());
+    let response = respond(&state.backend, &release, request, &visitor_hash).await;
 
     let bytes = header_str(response.headers(), "content-length")
         .and_then(|v| v.parse().ok())
@@ -78,6 +69,50 @@ pub async fn serve(
         ua_class: classify_user_agent(&user_agent),
         visitor_hash,
     });
+    response
+}
+
+/// One release of one site, as the responder needs it.
+#[derive(Debug, Clone, Copy)]
+pub struct Release<'a> {
+    pub site_id: i64,
+    pub site: &'a sw_core::SiteName,
+    /// The release's version: its commit sha.
+    pub sha: &'a str,
+    /// The directory holding the release's files.
+    pub root: &'a Path,
+    /// Whether the release has a backend.
+    pub backend: bool,
+}
+
+/// Answer one request for a site: a static file, or its backend for `/api`. This is the
+/// whole of a site's public behaviour; the daemon adds logging and the beacon around
+/// it, and a containerized site runs exactly this.
+pub async fn respond(
+    backends: &sw_backend::SiteBackends,
+    release: &Release<'_>,
+    request: Request,
+    visitor: &str,
+) -> Response {
+    let path = request.uri().path();
+    let method = request.method().clone();
+    let is_api = path == "/api" || path.starts_with("/api/");
+    let mut response = if sw_sites::confine::is_backend_path(path.trim_start_matches('/')) {
+        // Backend source and migrations are part of the release but never served.
+        StatusCode::NOT_FOUND.into_response()
+    } else if is_api && release.backend && backends.enabled() {
+        backend_response(backends, release, request, visitor).await
+    } else if method == Method::GET || method == Method::HEAD {
+        serve_file(release.root, request).await
+    } else {
+        (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET, HEAD")],
+            "method not allowed\n",
+        )
+            .into_response()
+    };
+    apply_headers(response.headers_mut());
     response
 }
 
@@ -117,15 +152,15 @@ fn backend_error(status: StatusCode, message: &str) -> Response {
 
 /// Hand an `/api/*` request to the site's backend.
 async fn backend_response(
-    state: &AppState,
-    route: &Route,
+    backends: &sw_backend::SiteBackends,
+    release: &Release<'_>,
     request: Request,
     visitor: &str,
 ) -> Response {
     use sw_backend::{BackendError, BackendRequest};
 
     let (parts, body) = request.into_parts();
-    let limit = state.backend.limits().max_request_body;
+    let limit = backends.limits().max_request_body;
     let Ok(bytes) = axum::body::to_bytes(body, limit).await else {
         return backend_error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -155,13 +190,12 @@ async fn backend_response(
         headers,
         body,
     };
-    let answer = state
-        .backend
+    let answer = backends
         .serve(
-            route.site_id,
-            &route.site,
-            &route.sha,
-            &route.root,
+            release.site_id,
+            release.site,
+            release.sha,
+            release.root,
             backend_request,
         )
         .await;
@@ -182,7 +216,7 @@ async fn backend_response(
             return backend_error(StatusCode::BAD_GATEWAY, "the backend's answer is too large");
         }
         Err(error) => {
-            tracing::warn!(site = %route.site, %error, "backend request failed");
+            tracing::warn!(site = %release.site, %error, "backend request failed");
             return backend_error(StatusCode::INTERNAL_SERVER_ERROR, "backend error");
         }
     };

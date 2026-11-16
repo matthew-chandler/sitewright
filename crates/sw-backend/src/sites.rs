@@ -403,6 +403,26 @@ impl SiteBackends {
         Self::with_egress(config, data, pool, command, Egress::new())
     }
 
+    /// For a site running on its own, outside Sitewright (in a container): secrets are
+    /// read from the process environment, where whoever runs the container put them, and
+    /// only those named in `secret_names`.
+    pub fn standalone(
+        config: &BackendsConfig,
+        data: DataDir,
+        pool: sqlx::SqlitePool,
+        command: WorkerCommand,
+        secret_names: Vec<String>,
+    ) -> Self {
+        Self::build(
+            config,
+            data,
+            pool,
+            command,
+            Egress::new(),
+            SiteSecrets::from_env(secret_names),
+        )
+    }
+
     /// Like [`Self::new`], with a different outbound-request policy. For tests.
     #[doc(hidden)]
     pub fn with_egress(
@@ -411,6 +431,18 @@ impl SiteBackends {
         pool: sqlx::SqlitePool,
         command: WorkerCommand,
         egress: Egress,
+    ) -> Self {
+        let secrets = SiteSecrets::new(data.site_secrets_file());
+        Self::build(config, data, pool, command, egress, secrets)
+    }
+
+    fn build(
+        config: &BackendsConfig,
+        data: DataDir,
+        pool: sqlx::SqlitePool,
+        command: WorkerCommand,
+        egress: Egress,
+        secrets: SiteSecrets,
     ) -> Self {
         // Cookies for visitor sessions are `Secure` exactly when sites are on HTTPS.
         let secure = config.secure_cookies;
@@ -422,7 +454,7 @@ impl SiteBackends {
             ..Limits::default()
         };
         let host = Arc::new(SiteHost {
-            secrets: SiteSecrets::new(data.site_secrets_file()),
+            secrets,
             llm: crate::llm::LlmGateway::new(pool.clone()),
             pool,
             egress,

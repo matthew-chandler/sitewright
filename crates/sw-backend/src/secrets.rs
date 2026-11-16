@@ -22,7 +22,11 @@ const MIN_REDACT_BYTES: usize = 6;
 /// The secrets file. Cheap operations; every change is written through at once.
 #[derive(Debug)]
 pub struct SiteSecrets {
-    path: PathBuf,
+    /// `None`: secrets come from the process environment (a site running on its own).
+    path: Option<PathBuf>,
+    /// In environment mode, the only names a backend may read. Without this list a
+    /// backend could read any variable, including the keys for AI models.
+    env_names: Vec<String>,
     /// Serializes read-modify-write cycles on the file.
     lock: Mutex<()>,
 }
@@ -42,17 +46,42 @@ fn key(site_id: i64, name: &str) -> String {
 impl SiteSecrets {
     pub fn new(path: PathBuf) -> Self {
         Self {
-            path,
+            path: Some(path),
+            env_names: Vec::new(),
             lock: Mutex::new(()),
         }
     }
 
+    /// Secrets read from environment variables of the same name. Used when a site runs
+    /// outside Sitewright, where there is one site per process and no owner portal:
+    /// nothing can be listed, stored or removed, and nothing needs redacting because no
+    /// agent is present.
+    pub fn from_env(names: Vec<String>) -> Self {
+        Self {
+            path: None,
+            env_names: names,
+            lock: Mutex::new(()),
+        }
+    }
+
+    fn file(&self) -> Result<&PathBuf, String> {
+        self.path
+            .as_ref()
+            .ok_or_else(|| "secrets are set in this site's environment, not stored here".to_owned())
+    }
+
     fn load(&self) -> Result<Secrets, String> {
-        Secrets::load(&self.path).map_err(|e| e.to_string())
+        match &self.path {
+            Some(path) => Secrets::load(path).map_err(|e| e.to_string()),
+            None => Ok(Secrets::default()),
+        }
     }
 
     /// The names of a site's secrets, sorted.
     pub fn names(&self, site_id: i64) -> Result<Vec<String>, String> {
+        if self.path.is_none() {
+            return Ok(self.env_names.clone());
+        }
         Ok(self
             .all(site_id)?
             .into_iter()
@@ -72,6 +101,15 @@ impl SiteSecrets {
     }
 
     pub fn get(&self, site_id: i64, name: &str) -> Result<Option<String>, String> {
+        if self.path.is_none() {
+            return Ok(self
+                .env_names
+                .iter()
+                .any(|allowed| allowed == name)
+                .then(|| std::env::var(name).ok())
+                .flatten()
+                .filter(|value| !value.is_empty()));
+        }
         Ok(self.load()?.keys.remove(&key(site_id, name)))
     }
 
@@ -101,7 +139,7 @@ impl SiteSecrets {
             return Err(format!("a site can have at most {MAX_PER_SITE} secrets"));
         }
         secrets.keys.insert(key(site_id, name), value.to_owned());
-        secrets.save(&self.path).map_err(|e| e.to_string())
+        secrets.save(self.file()?).map_err(|e| e.to_string())
     }
 
     /// Remove a secret. Returns whether it existed.
@@ -110,7 +148,7 @@ impl SiteSecrets {
         let mut secrets = self.load()?;
         let existed = secrets.keys.remove(&key(site_id, name)).is_some();
         if existed {
-            secrets.save(&self.path).map_err(|e| e.to_string())?;
+            secrets.save(self.file()?).map_err(|e| e.to_string())?;
         }
         Ok(existed)
     }
@@ -128,7 +166,7 @@ impl SiteSecrets {
         });
         let removed = before - secrets.keys.len();
         if removed > 0 {
-            secrets.save(&self.path).map_err(|e| e.to_string())?;
+            secrets.save(self.file()?).map_err(|e| e.to_string())?;
         }
         Ok(removed)
     }
@@ -136,6 +174,9 @@ impl SiteSecrets {
     /// Replace every occurrence of one of the site's secret values in `text` with
     /// `[secret NAME]`. If the secrets cannot be read, nothing is let through.
     pub fn redact(&self, site_id: i64, text: &str) -> String {
+        if self.path.is_none() {
+            return text.to_owned();
+        }
         let Ok(mut all) = self.all(site_id) else {
             return "[withheld: the site's secrets could not be read to check this text]".into();
         };
@@ -227,5 +268,23 @@ mod tests {
         assert!(secrets.names(1).unwrap().is_empty());
         assert_eq!(secrets.names(2).unwrap(), ["OTHER"]);
         assert_eq!(secrets.retain_sites(&[2]).unwrap(), 0);
+    }
+
+    #[test]
+    fn environment_secrets_are_limited_to_the_listed_names() {
+        // PATH is set in every test environment; it stands in for a variable that the
+        // site's backend must not be able to read, such as a model's API key.
+        let listed = SiteSecrets::from_env(vec!["PATH".into()]);
+        assert!(listed.get(1, "PATH").unwrap().is_some());
+        let unlisted = SiteSecrets::from_env(vec!["SHOP_API_KEY".into()]);
+        assert_eq!(unlisted.get(1, "PATH").unwrap(), None);
+        assert_eq!(
+            unlisted.get(1, "SHOP_API_KEY").unwrap(),
+            None,
+            "listed but not set"
+        );
+        assert_eq!(unlisted.names(1).unwrap(), ["SHOP_API_KEY"]);
+        assert!(unlisted.set(1, "X_KEY", "value").is_err());
+        assert_eq!(unlisted.redact(1, "text"), "text");
     }
 }
