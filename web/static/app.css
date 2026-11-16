@@ -102,6 +102,19 @@ summary { cursor: pointer; font-weight: 600; }
 .prompt { margin: 0.75rem 0; padding: 0.6rem 0.9rem; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .log { display: grid; gap: 0.5rem; margin: 1rem 0; }
 .log .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log .text.md { white-space: normal; }
+.log .text.md > :first-child { margin-top: 0; }
+.log .text.md > :last-child { margin-bottom: 0; }
+.log .text.md p, .log .text.md ul, .log .text.md ol, .log .text.md pre, .log .text.md table { margin: 0.5rem 0; }
+.log .text.md ul, .log .text.md ol { padding-left: 1.4rem; }
+.log .text.md li { margin: 0.2rem 0; }
+.log .text.md h1, .log .text.md h2, .log .text.md h3, .log .text.md h4 { font-size: 1rem; margin: 0.8rem 0 0.3rem; }
+.log .text.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.25rem; }
+.log .text.md pre { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem; overflow-x: auto; }
+.log .text.md pre code { background: none; border: 0; padding: 0; }
+.log .text.md table { border-collapse: collapse; display: block; overflow-x: auto; }
+.log .text.md th, .log .text.md td { border: 1px solid var(--line); padding: 0.25rem 0.5rem; text-align: left; }
+.log .text.md blockquote { margin: 0.5rem 0; padding-left: 0.75rem; border-left: 3px solid var(--line); color: var(--muted); }
 .log .tool { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.35rem 0.6rem; overflow-wrap: anywhere; }
 .log .tool.error { color: var(--danger); border-color: var(--danger); }
 .log .tool .name { color: var(--text); font-weight: 600; }

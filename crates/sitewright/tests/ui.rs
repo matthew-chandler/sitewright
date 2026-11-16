@@ -728,7 +728,7 @@ async fn create_watch_edit_roll_back_and_delete_from_the_ui() {
         tool_turn("create_site", json!({"name": "hikes", "title": "Washington Hikes"})),
         tool_turn("write_file", json!({"path": "index.html", "content": PAGE})),
         tool_turn("publish_site", json!({"message": "First version"})),
-        text_turn("Your site is live."),
+        text_turn("Your site is **live**.\n\n- one page\n- <script>alert(1)</script>"),
         tool_turn("write_file", json!({"path": "index.html", "content": PAGE.replace("Washington trails", "Second edition")})),
         tool_turn("publish_site", json!({"message": "Second edition"})),
         text_turn("Updated."),
@@ -764,7 +764,21 @@ async fn create_watch_edit_roll_back_and_delete_from_the_ui() {
     // Watch it build.
     let run_page = browser.get(&run_url).await.text().await.unwrap();
     assert!(run_page.contains("a hiking log") && run_page.contains("data-run=\"1\""));
+    assert!(run_page.contains("data-started=\"1") && run_page.contains("Back to site"));
     let kinds = follow_run(&browser, "1").await;
+    // Messages arrive with their Markdown rendered, and raw HTML in them neutralised.
+    let stream = browser.get("/runs/1/events").await.text().await.unwrap();
+    let message = stream
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|d| serde_json::from_str::<Value>(d).ok())
+        .find(|v| v["type"] == "text")
+        .expect("a text event");
+    let html = message["html"].as_str().unwrap();
+    assert!(html.contains("<strong>live</strong>") && html.contains("<li>one page</li>"));
+    assert!(!html.contains("<script") && html.contains("&lt;script&gt;"));
+    let finished = browser.get(&run_url).await.text().await.unwrap();
+    assert!(!finished.contains("data-finished=\"0\""));
     assert_eq!(kinds.first().map(String::as_str), Some("started"));
     assert_eq!(kinds.last().map(String::as_str), Some("done"));
     assert!(kinds.iter().filter(|k| *k == "tool_call").count() == 3);

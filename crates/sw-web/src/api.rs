@@ -398,8 +398,13 @@ pub fn run_event_stream(
                 s.last_seq = seq;
             }
             s.done = matches!(event, RunEvent::Done { .. });
-            let mut sse = Event::default()
-                .data(serde_json::to_string(&event).unwrap_or_else(|_| "{}".into()));
+            let mut payload = serde_json::to_value(&event).unwrap_or_default();
+            // Complete messages also carry their Markdown rendered to safe HTML, for the
+            // admin UI. API clients can ignore the extra field.
+            if let RunEvent::Text { text } = &event {
+                payload["html"] = crate::markdown::render(text).into();
+            }
+            let mut sse = Event::default().data(payload.to_string());
             if seq != 0 {
                 sse = sse.id(seq.to_string());
             }
