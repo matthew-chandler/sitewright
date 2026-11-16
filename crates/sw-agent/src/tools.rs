@@ -5,7 +5,10 @@
 
 use serde_json::{Value, json};
 use sw_llm::{ToolCall, ToolDef};
+use sw_metrics::dashboard::{SiteData, Source};
 use sw_sites::{Author, DomainChecker, SiteError, SiteStore};
+
+use crate::sitedata::SiteQueries;
 
 /// Largest file `read_file` returns to the model, in bytes.
 const MAX_READ_BYTES: usize = 200 * 1024;
@@ -162,16 +165,17 @@ pub fn definitions() -> Vec<ToolDef> {
         ),
         def(
             "metrics_schema",
-            "Describe the metrics you can query for this site: the views, their columns, the query parameters and the dashboard format.",
+            "Describe the data you can query for this site's dashboard: the metric views, their columns, the query parameters, how to read the site's own backend tables (source \"site\"), and the dashboard format.",
             none(),
         ),
         def(
             "run_readonly_query",
-            "Run one read-only SELECT over this site's metric views and return the rows. Use it to explore the data and to test a dashboard panel's query.",
+            "Run one read-only SELECT and return the rows: over this site's metric views, or with source \"site\" over the site's own backend database. Use it to explore the data and to test a dashboard panel's query.",
             schema(
                 json!({
-                    "sql": { "type": "string", "description": "One SELECT over v_requests, v_events, v_checks or v_daily. May use :site_id, :from and :to." },
+                    "sql": { "type": "string", "description": "One SELECT. source metrics: over v_requests, v_events, v_checks or v_daily; may use :site_id, :from and :to (ISO-8601 text). source site: over the site's own tables (see backend_schema); may use :from and :to (Unix milliseconds)." },
                     "days": { "type": "integer", "description": "Length of the time range ending now, 1 to 90. Default 30." },
+                    "source": { "type": "string", "enum": ["metrics", "site"], "description": "Where the query runs: \"metrics\" (default) or \"site\", the site's own backend database." },
                 }),
                 &["sql"],
             ),
@@ -530,20 +534,46 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let sql = required("sql")?;
                 let days = args.get("days").and_then(Value::as_i64).unwrap_or(30).clamp(1, 90);
                 let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let source = match args.get("source") {
+                    None | Some(Value::Null) => Source::Metrics,
+                    Some(value) => Source::parse(value.as_str().unwrap_or_default()).map_err(ToolOutcome::error)?,
+                };
                 let (from, to) = sw_metrics::dashboard::range(days);
-                let result = ctx.metrics.sandbox.query(site.id, &from, &to, sql).await.map_err(ToolOutcome::error)?;
+                let site_data = site_data(ctx, &site.name);
+                let mut result = sw_metrics::dashboard::query(
+                    &ctx.metrics.sandbox,
+                    site_data.as_ref().map(|data| data as &dyn SiteData),
+                    site.id,
+                    source,
+                    sql,
+                    (&from, &to),
+                )
+                .await
+                .map_err(ToolOutcome::error)?;
+                let mut range = json!({ "from": from, "to": to });
+                if source == Source::Site {
+                    // Rows of the site's own tables may hold anything its backend stored,
+                    // so they get the same treatment as the backend's other output.
+                    if let Some(backends) = &ctx.backends {
+                        result.rows.iter_mut().for_each(|row| redact_strings(backends, site.id, row));
+                    }
+                    range["from_ms"] = json!(sw_metrics::dashboard::iso_to_ms(&from));
+                    range["to_ms"] = json!(sw_metrics::dashboard::iso_to_ms(&to));
+                }
                 ToolOutcome::ok(json!({
                     "columns": result.columns,
                     "rows": result.rows,
                     "row_count": result.rows.len(),
                     "truncated": result.truncated,
-                    "range": { "from": from, "to": to },
+                    "range": range,
                 }))
             }
             "save_dashboard" => {
                 let spec = args.get("spec").filter(|s| s.is_object()).ok_or_else(|| ToolOutcome::error("missing required object argument \"spec\""))?;
                 let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
-                match sw_metrics::dashboard::validate(&ctx.metrics.sandbox, site.id, spec).await {
+                let site_data = site_data(ctx, &site.name);
+                let site_data = site_data.as_ref().map(|data| data as &dyn SiteData);
+                match sw_metrics::dashboard::validate(&ctx.metrics.sandbox, site_data, site.id, spec).await {
                     Ok(parsed) => {
                         let version = sw_metrics::dashboard::save(&ctx.metrics.db, site.id, &parsed).await.map_err(|e| {
                             tracing::error!(error = %e, "could not save a dashboard");
@@ -574,6 +604,28 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
     }
     .await;
     result.unwrap_or_else(|outcome| outcome)
+}
+
+/// The run's site's own database, for dashboard panels with `"source": "site"`. Bound to
+/// that one site; `None` when the server has no backends.
+fn site_data(ctx: &ToolContext, site: &sw_core::SiteName) -> Option<SiteQueries> {
+    ctx.backends
+        .as_ref()
+        .map(|backends| SiteQueries::new(backends.clone(), site.clone()))
+}
+
+/// Replace the site's secret values in every string of `value`.
+fn redact_strings(backends: &sw_backend::SiteBackends, site_id: i64, value: &mut Value) {
+    match value {
+        Value::String(text) => *text = backends.redact(site_id, text),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|item| redact_strings(backends, site_id, item)),
+        Value::Object(map) => map
+            .values_mut()
+            .for_each(|item| redact_strings(backends, site_id, item)),
+        _ => {}
+    }
 }
 
 /// Turn a store error into a result the model can act on. Server-side failures are

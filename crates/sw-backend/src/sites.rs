@@ -26,7 +26,7 @@ use crate::manager::{
     BackendError, BackendRequest, BackendResponse, Backends, Host, Limits, Target, WorkerCommand,
 };
 use crate::secrets::SiteSecrets;
-use crate::sitedb::{DbLimits, Migration, SiteDb, SiteDbs};
+use crate::sitedb::{DbLimits, Migration, ReadRows, SiteDb, SiteDbs};
 
 /// Console lines kept per site.
 const LOG_LINES: usize = 200;
@@ -715,6 +715,36 @@ impl SiteBackends {
             return Ok(Vec::new());
         }
         self.inner.host.dbs.get(&path).await?.schema().await
+    }
+
+    /// Run a read-only query on the site's live database, for its dashboard. The
+    /// database is the one that belongs to `site` and no other; it is not created when
+    /// the site has none.
+    pub async fn query_read_only(
+        &self,
+        site: &SiteName,
+        sql: &str,
+        params: &[Value],
+        max_rows: usize,
+    ) -> Result<ReadRows, String> {
+        let path = self.inner.host.db_path(site.as_str(), false)?;
+        if !path.is_file() {
+            return Err(
+                "this site has no database yet (it appears when a backend is published)".into(),
+            );
+        }
+        self.inner
+            .host
+            .dbs
+            .get(&path)
+            .await?
+            .query_read_only_with_columns(sql, params, max_rows)
+            .await
+    }
+
+    /// Replace the site's secret values in `text`, as for everything the agent is shown.
+    pub fn redact(&self, site_id: i64, text: &str) -> String {
+        self.inner.host.secrets.redact(site_id, text)
     }
 
     /// Whether the site has a database, and its size in bytes.
