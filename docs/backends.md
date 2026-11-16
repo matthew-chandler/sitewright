@@ -188,6 +188,10 @@ be published.
   most recent console output (kept in memory, 200 lines per site).
 - `sitewright doctor` starts a throwaway worker to check that backends can run here.
 - Backend requests appear in the site's metrics like any other request.
+- The site's dashboard can chart rows of its own database (entries per day, sign-ups):
+  a panel with `"source": "site"` runs one read-only `SELECT` on it. Such a query cannot
+  change anything and cannot read visitor sessions or password hashes. See
+  [metrics.md](metrics.md#panels-over-the-sites-own-data).
 
 ## What backends cannot do yet
 

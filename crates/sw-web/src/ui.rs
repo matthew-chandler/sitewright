@@ -977,8 +977,12 @@ async fn dashboard_data(
     };
     let days = query.days.unwrap_or(30).clamp(1, 365);
     let sandbox = &state.metrics.sandbox;
+    // Panels with `"source": "site"` read this site's own backend database, read-only.
+    let site_data = sw_agent::SiteQueries::new(state.backend.clone(), site.name.clone());
+    let site_data: Option<&dyn sw_metrics::dashboard::SiteData> = Some(&site_data);
     let standard = sw_metrics::dashboard::render(
         sandbox,
+        site_data,
         site.id,
         &sw_metrics::dashboard::default_spec(),
         days,
@@ -989,7 +993,9 @@ async fn dashboard_data(
         .ok()
         .flatten()
     {
-        Some((spec, _)) => sw_metrics::dashboard::render(sandbox, site.id, &spec, days).await,
+        Some((spec, _)) => {
+            sw_metrics::dashboard::render(sandbox, site_data, site.id, &spec, days).await
+        }
         None => Vec::new(),
     };
     axum::Json(serde_json::json!({ "days": days, "standard": standard, "custom": custom }))

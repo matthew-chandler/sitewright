@@ -4,13 +4,18 @@
 //! Vega-Lite chart description. The AI only chooses *which* charts fit a site. The server
 //! validates the spec, runs every query in the [`Sandbox`](crate::Sandbox) and injects
 //! the rows itself, so a spec can neither change data nor load anything from elsewhere.
+//!
+//! A panel reads from one of two places ([`Source`]): the site's traffic metrics, or the
+//! site's own backend database. This crate knows nothing about backends, so the second
+//! is reached through the [`SiteData`] trait.
 
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use sw_core::time::{MS_PER_DAY, now_ms};
 
-use crate::sandbox::Sandbox;
+use crate::sandbox::{MAX_SQL_BYTES, QueryResult, Sandbox};
 
 /// Most panels in one dashboard.
 pub const MAX_PANELS: usize = 12;
@@ -35,6 +40,51 @@ const VEGA_FORBIDDEN_KEYS: &[&str] = &[
     "data", "datasets", "url", "href", "usermeta", "$schema", "lookup", "from",
 ];
 
+/// What a panel on a site's own data reports when the site has no backend database.
+pub const NO_SITE_DATA: &str = "this site has no backend database";
+
+/// Where a panel's query runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    /// The metric views (`v_requests`, `v_events`, `v_checks`, `v_daily`).
+    #[default]
+    Metrics,
+    /// The site's own backend database, read-only.
+    Site,
+}
+
+impl Source {
+    fn is_metrics(&self) -> bool {
+        *self == Self::Metrics
+    }
+
+    /// Read the optional `source` argument of a tool call.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "metrics" => Ok(Self::Metrics),
+            "site" => Ok(Self::Site),
+            other => Err(format!(
+                "unknown source {other:?}; use \"metrics\" or \"site\""
+            )),
+        }
+    }
+}
+
+/// Read-only access to ONE site's own backend database, for panels with
+/// `"source": "site"`. An implementation is bound to a single site when it is made, so
+/// a query has no way to name another site's database.
+pub trait SiteData: Send + Sync {
+    /// Run one `SELECT`. `from` and `to` are the dashboard's ISO-8601 UTC range; see
+    /// [`prepare_site_sql`] for how `:from` and `:to` are bound.
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        from: &'a str,
+        to: &'a str,
+    ) -> BoxFuture<'a, Result<QueryResult, String>>;
+}
+
 /// A dashboard: what is stored and what the agent submits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +101,11 @@ pub struct Panel {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    /// One SELECT over the metric views, using `:site_id`, `:from` and `:to`.
+    /// Where `sql` runs. Left out of the JSON when it is the default, `metrics`.
+    #[serde(default, skip_serializing_if = "Source::is_metrics")]
+    pub source: Source,
+    /// One SELECT. For `metrics`: over the metric views, using `:site_id`, `:from` and
+    /// `:to`. For `site`: over the site's own tables, using `:from` and `:to`.
     pub sql: String,
     /// A Vega-Lite spec without `data`: the query's rows are injected by the server.
     pub vega_lite: Value,
@@ -89,7 +143,8 @@ pub fn json_schema() -> Value {
                         "id": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$" },
                         "title": { "type": "string", "minLength": 1, "maxLength": 80 },
                         "description": { "type": "string", "maxLength": 300 },
-                        "sql": { "type": "string", "description": "One SELECT over v_requests, v_events, v_checks or v_daily. Parameters: :site_id, :from, :to." },
+                        "source": { "enum": ["metrics", "site"], "default": "metrics", "description": "Where the query runs: the metric views, or the site's own backend database (read-only)." },
+                        "sql": { "type": "string", "description": "One SELECT. source metrics: over v_requests, v_events, v_checks or v_daily, with :site_id, :from, :to (ISO-8601 text). source site: over the site's own tables, with :from and :to (Unix milliseconds)." },
                         "vega_lite": {
                             "type": "object",
                             "description": "A Vega-Lite spec without data. Allowed top-level properties: mark, encoding, layer, transform, title, description, width, height, config, resolve.",
@@ -262,9 +317,163 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
-/// Validate a spec fully: its shape, then every query in the sandbox for `site_id`.
+/// Run a query where its panel says: in the metrics sandbox, or on the site's own
+/// database.
+pub async fn query(
+    sandbox: &Sandbox,
+    site_data: Option<&dyn SiteData>,
+    site_id: i64,
+    source: Source,
+    sql: &str,
+    (from, to): (&str, &str),
+) -> Result<QueryResult, String> {
+    match (source, site_data) {
+        (Source::Metrics, _) => sandbox.query(site_id, from, to, sql).await,
+        (Source::Site, Some(site_data)) => site_data.query(sql, from, to).await,
+        (Source::Site, None) => Err(NO_SITE_DATA.into()),
+    }
+}
+
+/// Check a query for a site's own database and turn its `:from` and `:to` into bound
+/// parameters. Returns the SQL with `?` placeholders and the values to bind, in order.
+///
+/// Site tables conventionally store times as `Date.now()` (Unix milliseconds), so the
+/// ISO-8601 range the dashboard uses is bound as two integers. Binding, rather than
+/// pasting the numbers in, keeps the values out of the SQL text altogether. What the
+/// query may *do* is not decided here: the site database's authorizer does that.
+pub fn prepare_site_sql(sql: &str, from: &str, to: &str) -> Result<(String, Vec<i64>), String> {
+    let sql = sql.trim().trim_end_matches(';').trim();
+    if sql.is_empty() {
+        return Err("the query is empty".into());
+    }
+    if sql.len() > MAX_SQL_BYTES {
+        return Err(format!("the query is longer than {MAX_SQL_BYTES} bytes"));
+    }
+    if sql.contains(';') {
+        return Err("only one statement is allowed (remove the ';')".into());
+    }
+    let head = sql
+        .trim_start_matches('(')
+        .trim_start()
+        .to_ascii_lowercase();
+    if !(head.starts_with("select") || head.starts_with("with")) {
+        return Err("only SELECT queries are allowed".into());
+    }
+    let (Some(from_ms), Some(to_ms)) = (iso_to_ms(from), iso_to_ms(to)) else {
+        return Err("the time range is not valid".into());
+    };
+
+    let mut out = String::with_capacity(sql.len());
+    let mut params = Vec::new();
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // A string literal or quoted identifier is copied as it is: a `?` inside
+            // one is not a placeholder, so nothing in it may be replaced. (A doubled
+            // quote inside a literal reads as two literals side by side, which copies
+            // the same text.)
+            quote @ (b'\'' | b'"') => {
+                let end = sql[i + 1..]
+                    .bytes()
+                    .position(|b| b == quote)
+                    .map_or(bytes.len(), |at| i + 1 + at + 1);
+                out.push_str(&sql[i..end]);
+                i = end;
+                continue;
+            }
+            // The values are bound by position, so a placeholder of the query's own
+            // would shift them.
+            b'?' => {
+                return Err(
+                    "'?' placeholders are not available; use :from and :to for the time range"
+                        .into(),
+                );
+            }
+            b':' => {
+                let rest = &sql[i + 1..];
+                let name_len = rest
+                    .bytes()
+                    .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+                    .count();
+                match &rest[..name_len] {
+                    "from" => params.push(from_ms),
+                    "to" => params.push(to_ms),
+                    "site_id" => {
+                        return Err(
+                            ":site_id is not available with source \"site\": the query already runs on this site's own database, so leave it out"
+                                .into(),
+                        );
+                    }
+                    "" => {
+                        out.push(':');
+                        i += 1;
+                        continue;
+                    }
+                    name => {
+                        return Err(format!(
+                            "unknown parameter :{name}; only :from and :to (Unix milliseconds) are available with source \"site\""
+                        ));
+                    }
+                }
+                out.push('?');
+                i += 1 + name_len;
+                continue;
+            }
+            _ => {}
+        }
+        // Advance one whole character.
+        let ch_len = sql[i..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&sql[i..i + ch_len]);
+        i += ch_len;
+    }
+    Ok((out, params))
+}
+
+/// `YYYY-MM-DDTHH:MM:SSZ` (what [`range`] produces) as Unix milliseconds.
+pub fn iso_to_ms(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    let shape_ok = bytes.len() == 20
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            10 => *b == b'T',
+            13 | 16 => *b == b':',
+            19 => *b == b'Z',
+            _ => b.is_ascii_digit(),
+        });
+    if !shape_ok {
+        return None;
+    }
+    let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let seconds = days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second;
+    Some(seconds * 1000)
+}
+
+/// (year, month, day) to days since 1970-01-01: the inverse of [`civil_from_days`].
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Validate a spec fully: its shape, then every query for `site_id`, each where its
+/// panel's `source` says. Without `site_data`, panels on the site's own data are
+/// reported as problems.
 pub async fn validate(
     sandbox: &Sandbox,
+    site_data: Option<&dyn SiteData>,
     site_id: i64,
     spec: &Value,
 ) -> Result<DashboardSpec, Vec<String>> {
@@ -272,7 +481,8 @@ pub async fn validate(
     let (from, to) = range(30);
     let mut problems = Vec::new();
     for panel in &parsed.panels {
-        match sandbox.query(site_id, &from, &to, &panel.sql).await {
+        let range = (from.as_str(), to.as_str());
+        match query(sandbox, site_data, site_id, panel.source, &panel.sql, range).await {
             Ok(result) => {
                 // With rows in hand, check the chart only uses columns the query returns.
                 if !result.columns.is_empty() {
@@ -334,9 +544,11 @@ pub async fn load(
     Ok(row.and_then(|r| Some((serde_json::from_str(&r.spec).ok()?, r.updated_at))))
 }
 
-/// Run every panel's query and attach the rows.
+/// Run every panel's query and attach the rows. Without `site_data`, panels on the
+/// site's own data carry an error instead.
 pub async fn render(
     sandbox: &Sandbox,
+    site_data: Option<&dyn SiteData>,
     site_id: i64,
     spec: &DashboardSpec,
     days: i64,
@@ -344,7 +556,9 @@ pub async fn render(
     let (from, to) = range(days);
     let mut out = Vec::with_capacity(spec.panels.len());
     for panel in &spec.panels {
-        let (rows, error) = match sandbox.query(site_id, &from, &to, &panel.sql).await {
+        let range = (from.as_str(), to.as_str());
+        let result = query(sandbox, site_data, site_id, panel.source, &panel.sql, range).await;
+        let (rows, error) = match result {
             Ok(result) => (result.rows, None),
             Err(e) => (Vec::new(), Some(e)),
         };
@@ -363,6 +577,7 @@ pub fn default_spec() -> DashboardSpec {
         id: id.into(),
         title: title.into(),
         description: description.into(),
+        source: Source::Metrics,
         sql: sql.into(),
         vega_lite,
     };
@@ -425,6 +640,25 @@ pub fn metrics_schema() -> Value {
             ":site_id": "this site's id (queries only ever see this site's rows, with or without it)",
             ":from": "start of the selected time range, ISO-8601 UTC text",
             ":to": "end of the selected time range, ISO-8601 UTC text",
+        },
+        "sources": {
+            "metrics": "The default. A panel (or run_readonly_query) reads the views below. Everything under parameters, views and rules is about this source.",
+            "site": {
+                "description": "Set \"source\": \"site\" on a panel (or pass source to run_readonly_query) to read the site's OWN backend database instead, read-only: guestbook entries, sign-ups, orders, whatever its backend stores. Call backend_schema for the tables. A site without a published backend has no database, and such a panel fails.",
+                "parameters": {
+                    ":from": "start of the selected time range, as Unix milliseconds (an integer)",
+                    ":to": "end of the selected time range, as Unix milliseconds (an integer)",
+                },
+                "rules": [
+                    "One SELECT (WITH is fine) over the site's own tables. The metric views are not available here, and the site's tables are not available to metrics panels: one panel reads one source.",
+                    "No :site_id and no '?' placeholders: the database is this site's own.",
+                    "Site tables conventionally store times as Date.now() milliseconds, so filter with: created_at BETWEEN :from AND :to, and group by day with: date(created_at / 1000, 'unixepoch').",
+                    "sw_users (visitor accounts) exposes only id, email and created_at; do not SELECT * from it. Sessions and password hashes cannot be read.",
+                    "Show counts and aggregates, not personal data: never chart emails, names or message texts.",
+                    format!("At most {} rows are returned.", crate::sandbox::MAX_ROWS),
+                ],
+                "example": "SELECT date(created_at / 1000, 'unixepoch') AS day, count(*) AS n FROM entries WHERE created_at BETWEEN :from AND :to GROUP BY day ORDER BY day",
+            },
         },
         "views": {
             "v_requests": {
@@ -555,43 +789,43 @@ mod tests {
         .unwrap();
         let sandbox = Sandbox::open(&path).await.unwrap();
 
-        assert!(validate(&sandbox, 1, &spec(line())).await.is_ok());
+        assert!(validate(&sandbox, None, 1, &spec(line())).await.is_ok());
 
         let mut forbidden = spec(line());
         forbidden["panels"][0]["sql"] = json!("SELECT value AS day, 1 AS n FROM settings");
-        let problems = validate(&sandbox, 1, &forbidden).await.unwrap_err();
+        let problems = validate(&sandbox, None, 1, &forbidden).await.unwrap_err();
         assert!(problems[0].contains("not allowed"), "{problems:?}");
 
         let mut writes = spec(line());
         writes["panels"][0]["sql"] = json!("DELETE FROM events");
-        assert!(validate(&sandbox, 1, &writes).await.is_err());
+        assert!(validate(&sandbox, None, 1, &writes).await.is_err());
 
         let mut typo = spec(line());
         typo["panels"][0]["sql"] = json!("SELECT day, count(*) AS n FROM v_event");
-        assert!(validate(&sandbox, 1, &typo).await.unwrap_err()[0].contains("SQL error"));
+        assert!(validate(&sandbox, None, 1, &typo).await.unwrap_err()[0].contains("SQL error"));
 
         let wrong_field = spec(
             json!({"mark": "line", "encoding": {"x": {"field": "date", "type": "temporal"}, "y": {"field": "n", "type": "quantitative"}}}),
         );
-        let problems = validate(&sandbox, 1, &wrong_field).await.unwrap_err();
+        let problems = validate(&sandbox, None, 1, &wrong_field).await.unwrap_err();
         assert!(
             problems[0].contains("\"date\"") && problems[0].contains("day, n"),
             "{problems:?}"
         );
 
         // Saving bumps the version; rendering attaches rows.
-        let parsed = validate(&sandbox, 1, &spec(line())).await.unwrap();
+        let parsed = validate(&sandbox, None, 1, &spec(line())).await.unwrap();
         assert!(save(&db, 1, &parsed).await.is_err(), "the site must exist");
         sqlx::query("INSERT INTO sites (id, name, title, created_at, updated_at) VALUES (1, 's', 'S', 0, 0)").execute(&db).await.unwrap();
         assert_eq!(save(&db, 1, &parsed).await.unwrap(), 1);
         assert_eq!(save(&db, 1, &parsed).await.unwrap(), 2);
         let (loaded, _) = load(&db, 1).await.unwrap().unwrap();
-        let data = render(&sandbox, 1, &loaded, 30).await;
+        let data = render(&sandbox, None, 1, &loaded, 30).await;
         assert_eq!(data[0].rows[0]["n"], 1);
         assert!(data[0].error.is_none());
 
         // The built-in dashboard runs cleanly against an (almost) empty database.
-        for panel in render(&sandbox, 1, &default_spec(), 30).await {
+        for panel in render(&sandbox, None, 1, &default_spec(), 30).await {
             assert!(
                 panel.error.is_none(),
                 "{}: {:?}",
@@ -599,6 +833,201 @@ mod tests {
                 panel.error
             );
         }
+    }
+
+    #[test]
+    fn site_queries_get_their_time_range_as_bound_milliseconds() {
+        let (from, to) = ("2026-11-01T00:00:00Z", "2026-11-16T12:30:05Z");
+        let (from_ms, to_ms) = (1_793_491_200_000, 1_794_832_205_000);
+        assert_eq!(iso_to_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_to_ms("2000-02-29T00:00:01Z"), Some(951_782_401_000));
+        assert_eq!(iso_to_ms(from), Some(from_ms));
+        assert_eq!(iso_to_ms(to), Some(to_ms));
+        // What `range` writes is what `iso_to_ms` reads.
+        let (start, end) = range(7);
+        let (start, end) = (iso_to_ms(&start).unwrap(), iso_to_ms(&end).unwrap());
+        assert!((end - start - 7 * MS_PER_DAY - 1000).abs() < 2000);
+        assert!((end - now_ms()).abs() < 5000);
+        for bad in [
+            "",
+            "2026-11-01",
+            "2026-11-01 00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-11-01T24:00:00Z",
+            "+026-11-01T00:00:00Z",
+            "2026-11-01T00:00:0éZ",
+        ] {
+            assert_eq!(iso_to_ms(bad), None, "{bad}");
+        }
+
+        // Values are bound in the order the tokens appear, however often.
+        let (sql, params) = prepare_site_sql(
+            " SELECT count(*) AS n FROM entries WHERE created_at <= :to AND created_at >= :from AND updated_at < :to; ",
+            from,
+            to,
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT count(*) AS n FROM entries WHERE created_at <= ? AND created_at >= ? AND updated_at < ?"
+        );
+        assert_eq!(params, [to_ms, from_ms, to_ms]);
+
+        let plain = "WITH x AS (SELECT 1 AS a) SELECT a FROM x";
+        assert_eq!(
+            prepare_site_sql(plain, from, to).unwrap(),
+            (plain.to_owned(), vec![])
+        );
+
+        // Literals and quoted names are left alone, so the placeholders still line up.
+        let (sql, params) = prepare_site_sql(
+            "SELECT 'at 12:30, :from? it''s :to' AS \"why:to?\", 'é' AS e FROM t WHERE at > :from",
+            from,
+            to,
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT 'at 12:30, :from? it''s :to' AS \"why:to?\", 'é' AS e FROM t WHERE at > ?"
+        );
+        assert_eq!(params, [from_ms]);
+        let open = "SELECT 'never closed :from";
+        assert_eq!(
+            prepare_site_sql(open, from, to).unwrap(),
+            (open.to_owned(), vec![])
+        );
+
+        let refused = |sql: &str| prepare_site_sql(sql, from, to).unwrap_err();
+        assert!(refused("SELECT * FROM entries WHERE site = :site_id").contains("leave it out"));
+        assert!(refused("SELECT :limit").contains("unknown parameter :limit"));
+        // Part of a longer name is a different, unknown parameter.
+        assert!(refused("SELECT :from_day").contains(":from_day"));
+        assert!(refused("SELECT :total").contains(":total"));
+        assert!(refused("SELECT * FROM entries WHERE id = ?").contains("placeholders"));
+        assert!(refused("SELECT ?1").contains("placeholders"));
+        assert!(refused("DELETE FROM entries").contains("only SELECT"));
+        assert!(refused("SELECT 1; DELETE FROM entries").contains("one statement"));
+        assert!(refused("  ").contains("empty"));
+        assert!(refused(&format!("SELECT '{}'", "x".repeat(MAX_SQL_BYTES))).contains("longer"));
+        assert!(
+            prepare_site_sql("SELECT 1", "yesterday", to)
+                .unwrap_err()
+                .contains("time range")
+        );
+    }
+
+    /// A stand-in for a site database: it answers with the SQL it was given.
+    struct Echo;
+
+    impl SiteData for Echo {
+        fn query<'a>(
+            &'a self,
+            sql: &'a str,
+            from: &'a str,
+            to: &'a str,
+        ) -> BoxFuture<'a, Result<QueryResult, String>> {
+            Box::pin(async move {
+                let (sql, params) = prepare_site_sql(sql, from, to)?;
+                Ok(QueryResult {
+                    columns: vec!["day".into(), "n".into()],
+                    rows: vec![json!({"day": sql, "n": params.len()})],
+                    truncated: false,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn site_panels_run_on_the_site_data_and_fail_cleanly_without_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        let db = sw_core::db::open(&path).await.unwrap();
+        sw_core::db::migrate(&db, &dir.path().join("b"))
+            .await
+            .unwrap();
+        let sandbox = Sandbox::open(&path).await.unwrap();
+
+        let mut mixed = spec(line());
+        let mut site_panel = mixed["panels"][0].clone();
+        site_panel["id"] = json!("entries");
+        site_panel["source"] = json!("site");
+        site_panel["sql"] =
+            json!("SELECT day, n FROM entries WHERE created_at BETWEEN :from AND :to");
+        mixed["panels"].as_array_mut().unwrap().push(site_panel);
+
+        // The source survives a round trip, and the default is left out.
+        let parsed = validate(&sandbox, Some(&Echo), 1, &mixed).await.unwrap();
+        assert_eq!(parsed.panels[0].source, Source::Metrics);
+        assert_eq!(parsed.panels[1].source, Source::Site);
+        let stored = serde_json::to_value(&parsed).unwrap();
+        assert!(stored["panels"][0].get("source").is_none());
+        assert_eq!(stored["panels"][1]["source"], "site");
+        assert_eq!(validate_shape(&stored).unwrap(), parsed);
+
+        let data = render(&sandbox, Some(&Echo), 1, &parsed, 30).await;
+        assert!(data[0].error.is_none() && data[1].error.is_none());
+        assert_eq!(
+            data[1].rows[0]["day"],
+            "SELECT day, n FROM entries WHERE created_at BETWEEN ? AND ?"
+        );
+        assert_eq!(data[1].rows[0]["n"], 2);
+
+        // A site table is not reachable from a metrics panel: the source decides.
+        let mut wrong_source = mixed.clone();
+        wrong_source["panels"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("source");
+        let problems = validate(&sandbox, Some(&Echo), 1, &wrong_source)
+            .await
+            .unwrap_err();
+        assert!(
+            problems[0].starts_with("panel \"entries\": sql:"),
+            "{problems:?}"
+        );
+
+        // The chart's fields are checked against a site query's columns too.
+        let mut wrong_field = mixed.clone();
+        wrong_field["panels"][1]["vega_lite"]["encoding"]["y"]["field"] = json!("total");
+        let problems = validate(&sandbox, Some(&Echo), 1, &wrong_field)
+            .await
+            .unwrap_err();
+        assert!(
+            problems[0].contains("\"total\"") && problems[0].contains("day, n"),
+            "{problems:?}"
+        );
+
+        // Without a site database the panel fails, and only that panel.
+        let problems = validate(&sandbox, None, 1, &mixed).await.unwrap_err();
+        assert_eq!(
+            problems,
+            [format!("panel \"entries\": sql: {NO_SITE_DATA}")]
+        );
+        let data = render(&sandbox, None, 1, &parsed, 30).await;
+        assert!(data[0].error.is_none());
+        assert_eq!(data[1].error.as_deref(), Some(NO_SITE_DATA));
+        assert!(data[1].rows.is_empty());
+
+        let mut unknown = mixed.clone();
+        unknown["panels"][1]["source"] = json!("main");
+        assert!(validate_shape(&unknown).is_err());
+        assert_eq!(Source::parse("site"), Ok(Source::Site));
+        assert_eq!(Source::parse("metrics"), Ok(Source::Metrics));
+        assert!(Source::parse("main").is_err());
+
+        // The agent is told how: the field, where the tables are listed, the units.
+        let schema = metrics_schema();
+        let site = schema["sources"]["site"].to_string();
+        for needle in [
+            "backend_schema",
+            "Unix milliseconds",
+            "id, email and created_at",
+        ] {
+            assert!(site.contains(needle), "{needle}");
+        }
+        let source =
+            &schema["dashboard_schema"]["properties"]["panels"]["items"]["properties"]["source"];
+        assert_eq!(source["enum"], json!(["metrics", "site"]));
     }
 
     #[test]

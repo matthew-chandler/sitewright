@@ -512,3 +512,241 @@ async fn the_agent_designs_a_dashboard_and_bad_specs_are_refused() {
     assert!(page.contains("Regenerate") && page.contains("Panels chosen by the agent"));
     t.daemon.shutdown().await;
 }
+
+const GUESTBOOK: &str = r#"
+import { Router, json, db } from "sitewright";
+const app = new Router();
+app.post("/api/entries", async (req) => {
+  const { name } = await req.data();
+  await db.run("insert into entries (name, created_at) values (?, ?)", name, Date.now());
+  return json({ ok: true }, 201);
+});
+app.get("/api/entries", async () => json(await db.query("select name from entries order by id")));
+export default app;
+"#;
+
+/// A dashboard panel can chart rows of the site's own database: read-only, that site
+/// only, and a site without a database gets an error instead of a database.
+#[tokio::test]
+async fn the_agent_charts_a_sites_own_data_read_only() {
+    const SECRET: &str = "sk-partner-0123456789abcdef";
+    let per_day = "SELECT date(created_at / 1000, 'unixepoch') AS day, count(*) AS n FROM entries \
+                   WHERE created_at BETWEEN :from AND :to GROUP BY day ORDER BY day";
+    let chart = json!({"mark": "bar", "encoding": {"x": {"field": "day", "type": "temporal"}, "y": {"field": "n", "type": "quantitative"}}});
+    let site_panel = |sql: &str| json!({"id": "entries", "title": "Guestbook entries per day", "source": "site", "sql": sql, "vega_lite": chart});
+    let spec = |sql: &str| {
+        json!({"version": 1, "panels": [
+            {"id": "views", "title": "Views per day", "sql": "SELECT day, sum(is_page_view) AS n FROM v_requests WHERE ts BETWEEN :from AND :to GROUP BY day", "vega_lite": chart},
+            site_panel(sql),
+        ]})
+    };
+    let site_query =
+        |sql: &str| tool_turn("run_readonly_query", json!({"sql": sql, "source": "site"}));
+
+    let model = mock_model(vec![
+        // Run 1, on the site with a backend.
+        tool_turn("metrics_schema", json!({})),
+        site_query(per_day),
+        site_query("SELECT name FROM entries ORDER BY id"),
+        site_query("DELETE FROM entries"),
+        site_query("SELECT count(*) AS n FROM sw_sessions"),
+        site_query("SELECT * FROM sw_users"),
+        site_query("SELECT count(*) AS n FROM v_requests"),
+        site_query("SELECT count(*) AS n FROM entries WHERE :site_id = 1"),
+        tool_turn(
+            "run_readonly_query",
+            json!({"sql": "SELECT count(*) AS n FROM entries"}),
+        ),
+        tool_turn(
+            "run_readonly_query",
+            json!({"sql": "SELECT 1 AS n", "source": "main"}),
+        ),
+        tool_turn(
+            "save_dashboard",
+            json!({"spec": spec("DELETE FROM entries")}),
+        ),
+        tool_turn(
+            "save_dashboard",
+            json!({"spec": spec("SELECT expires_at AS day, 1 AS n FROM sw_sessions")}),
+        ),
+        tool_turn("save_dashboard", json!({"spec": spec(per_day)})),
+        text_turn("Saved a dashboard with the guestbook's entries."),
+        // Run 2, on a site without one.
+        site_query("SELECT 1 AS n"),
+        tool_turn(
+            "save_dashboard",
+            json!({"spec": spec("SELECT 1 AS day, 2 AS n")}),
+        ),
+        text_turn("This site has no database."),
+    ])
+    .await;
+    let t = boot_with(&format!(
+        "{}[metrics]\nuptime_interval_secs = 0\n",
+        llm_config(&model)
+    ))
+    .await;
+    write_secrets(&t);
+    import(&t, "hikes").await;
+    let dir = t.site_dir(
+        "guestbook-src",
+        &[
+            ("index.html", PAGE),
+            ("backend/index.js", GUESTBOOK),
+            (
+                "backend/migrations/0001_entries.sql",
+                "CREATE TABLE entries (id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);",
+            ),
+        ],
+    );
+    t.cli(&["site", "import", "guestbook", path_str(&dir)])
+        .await
+        .unwrap();
+    let state = &t.daemon.state;
+    let guestbook = state.store.get("guestbook").await.unwrap();
+    let hikes = state.store.get("hikes").await.unwrap();
+    state
+        .backend
+        .set_secret(guestbook.id, "PARTNER_KEY", SECRET)
+        .unwrap();
+    for name in ["Ada", SECRET] {
+        let made = t
+            .http
+            .post(format!("http://{}/api/entries", t.daemon.addr))
+            .header("host", host("guestbook"))
+            .json(&json!({"name": name}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(made.status(), StatusCode::CREATED);
+    }
+    assert!(state.backend.database_size(&guestbook.name).is_some());
+    assert!(state.backend.database_size(&hikes.name).is_none());
+
+    let admin = Admin::new(&t).await;
+    let run = |site: &'static str| {
+        let admin = &admin;
+        async move {
+            let started = admin
+                .post(&format!("/sites/{site}/dashboard/regenerate"), &[])
+                .await;
+            let run_url = started.headers()["hx-redirect"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            let events = admin
+                .get(&format!("{run_url}/events"))
+                .await
+                .text()
+                .await
+                .unwrap();
+            assert!(events.contains("\"status\":\"succeeded\""), "{events}");
+            assert!(!events.contains(SECRET), "a secret value reached the model");
+            events
+                .lines()
+                .filter_map(|l| l.strip_prefix("data: "))
+                .filter_map(|d| serde_json::from_str::<Value>(d).ok())
+                .filter(|e| e["type"] == "tool_result")
+                .map(|e| {
+                    (
+                        e["is_error"].as_bool().unwrap(),
+                        e["content"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<(bool, String)>>()
+        }
+    };
+
+    let results = run("guestbook").await;
+    let refused = |i: usize, why: &str| {
+        let (is_error, content) = &results[i];
+        assert!(*is_error && content.contains(why), "result {i}: {content}");
+    };
+    assert!(
+        !results[0].0 && results[0].1.contains("\"source\""),
+        "the schema names the source field (the event stream shortens the rest): {:?}",
+        results[0]
+    );
+    let per_day_result: Value = serde_json::from_str(&results[1].1).unwrap();
+    assert!(!results[1].0, "{}", results[1].1);
+    assert_eq!(per_day_result["columns"], json!(["day", "n"]));
+    assert_eq!(per_day_result["rows"][0]["n"], 2);
+    assert_eq!(per_day_result["row_count"], 1);
+    assert!(per_day_result["range"]["from_ms"].as_i64().unwrap() > 1_700_000_000_000);
+    let names: Value = serde_json::from_str(&results[2].1).unwrap();
+    assert_eq!(
+        names["rows"],
+        json!([{"name": "Ada"}, {"name": "[secret PARTNER_KEY]"}]),
+        "stored secret values are redacted for the agent"
+    );
+    refused(3, "only SELECT");
+    refused(4, "not allowed");
+    refused(5, "not allowed");
+    refused(6, "v_requests");
+    refused(7, ":site_id");
+    refused(8, "entries");
+    refused(9, "unknown source");
+    refused(10, "only SELECT");
+    refused(11, "not allowed");
+    assert!(
+        !results[12].0 && results[12].1.contains("\"saved\":true"),
+        "{}",
+        results[12].1
+    );
+
+    // The owner's dashboard shows the site's rows next to its traffic.
+    let data = admin.dashboard("guestbook").await;
+    let entries = panel(&data, "custom", "entries");
+    assert!(entries["error"].is_null(), "{entries}");
+    assert_eq!(entries["source"], "site");
+    assert_eq!(entries["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(entries["rows"][0]["n"], 2);
+    let views = panel(&data, "custom", "views");
+    assert!(views["error"].is_null() && views.get("source").is_none());
+
+    // Nothing was written: both entries are still there.
+    let listed: Value = t
+        .get(&host("guestbook"), "/api/entries")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 2);
+
+    // A site without a database: the query and the dashboard are refused...
+    let results = run("hikes").await;
+    assert!(
+        results[0].0 && results[0].1.contains("no database yet"),
+        "{}",
+        results[0].1
+    );
+    assert!(
+        results[1].0 && results[1].1.contains("no database yet"),
+        "{}",
+        results[1].1
+    );
+    // ...and a stored one (say, from before the backend was removed) shows the error on
+    // that panel only. Guestbook's panel, stored for hikes, reads hikes' data: none.
+    let stored = serde_json::to_string(&spec(per_day)).unwrap();
+    sqlx::query("INSERT INTO dashboards (site_id, spec, version, updated_at) VALUES (?, ?, 1, 0)")
+        .bind(hikes.id)
+        .bind(stored)
+        .execute(state.store.db())
+        .await
+        .unwrap();
+    let data = admin.dashboard("hikes").await;
+    let entries = panel(&data, "custom", "entries");
+    assert!(
+        entries["error"]
+            .as_str()
+            .unwrap()
+            .contains("no database yet"),
+        "{entries}"
+    );
+    assert_eq!(entries["rows"], json!([]));
+    assert!(panel(&data, "custom", "views")["error"].is_null());
+    assert!(
+        state.backend.database_size(&hikes.name).is_none(),
+        "asking did not create a database"
+    );
+    t.daemon.shutdown().await;
+}
