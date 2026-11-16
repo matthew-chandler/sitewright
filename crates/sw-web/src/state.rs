@@ -24,6 +24,11 @@ pub struct AppState {
     pub auth: Arc<Auth>,
     /// The certificate manager, once it is running (standalone mode only).
     pub tls: Arc<std::sync::OnceLock<sw_tls::Manager>>,
+    /// Notified to make the daemon exit cleanly so its supervisor restarts it (after an
+    /// update or a rollback).
+    pub restart: Arc<tokio::sync::Notify>,
+    /// The newest released version, when it is newer than the running one.
+    pub update_available: Arc<std::sync::Mutex<Option<String>>>,
     /// The admin UI's hostname, normalized.
     pub admin_host: Arc<str>,
     /// The admin UI's origin, for example `https://admin.example.com`.

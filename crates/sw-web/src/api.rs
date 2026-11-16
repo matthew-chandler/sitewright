@@ -50,6 +50,7 @@ pub fn router(state: AppState) -> Router {
 pub fn socket_router(state: AppState) -> Router {
     let local = Router::new()
         .route("/v1/admin/invite", post(create_invite))
+        .route("/v1/admin/restart", post(restart))
         .with_state(state.clone());
     router(state).merge(local)
 }
@@ -62,6 +63,14 @@ async fn create_invite(State(state): State<AppState>) -> ApiResult<Json<Value>> 
         "url": format!("{}/enroll/{token}", state.admin_origin),
         "valid_minutes": crate::auth::INVITE_MINUTES,
     })))
+}
+
+/// Ask the daemon to shut down cleanly; its supervisor (systemd, `Restart=always`)
+/// starts it again with whatever binary is now on disk. Socket only.
+async fn restart(State(state): State<AppState>) -> Json<Value> {
+    sw_core::db::audit(state.store.db(), "cli", "daemon.restart", None, None).await;
+    state.restart.notify_one();
+    Json(json!({ "restarting": true }))
 }
 
 async fn health(State(state): State<AppState>) -> Json<Value> {

@@ -57,6 +57,17 @@ pub enum Command {
         #[arg(long, short)]
         output: Option<PathBuf>,
     },
+    /// Update to the latest release, after verifying its signature. Keeps the previous
+    /// version for `--rollback`.
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+        /// Go back to the version that was running before the last update, including the
+        /// database as it was before that update's migrations.
+        #[arg(long, conflicts_with = "check")]
+        rollback: bool,
+    },
     /// Ask the agent to build or change a site.
     Prompt {
         /// Create the site in this run (the name must be free).
@@ -147,6 +158,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::Update { check, rollback } => crate::update::run(&loaded, check, rollback).await,
         Command::Export {
             site,
             format,

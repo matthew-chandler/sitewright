@@ -50,12 +50,25 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         }
     }
 
+    // A rollback may have asked for the pre-migration database to be put back.
+    match sw_update::restore_database_if_requested(&data.backups_dir(), &data.db_file()) {
+        Ok(Some(backup)) => {
+            tracing::warn!(backup = %backup.display(), "restored the database from before the rolled-back update")
+        }
+        Ok(None) => {}
+        Err(error) => tracing::error!(%error, "could not restore the database after a rollback"),
+    }
     let db = sw_core::db::open(&data.db_file())
         .await
         .context("cannot open the database")?;
-    sw_core::db::migrate(&db, &data.backups_dir())
+    let migrated = sw_core::db::migrate(&db, &data.backups_dir())
         .await
         .context("cannot migrate the database")?;
+    if let Some(backup) = migrated
+        && let Err(error) = sw_update::record_migration(&data.backups_dir(), &backup)
+    {
+        tracing::warn!(%error, "could not record the pre-migration backup");
+    }
 
     let config = Arc::new(config);
     let store = SiteStore::open(db.clone(), data.clone(), &config)
@@ -97,6 +110,8 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         providers,
         auth: Arc::new(auth),
         tls: Arc::default(),
+        restart: Arc::default(),
+        update_available: Arc::default(),
     };
 
     let listen = listen.unwrap_or(config.server.listen);
@@ -184,6 +199,15 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
             }
         }
     }));
+
+    // Updates: look for a newer release daily; install it only if configured to.
+    if config.updates.check || config.updates.auto {
+        servers.push(tokio::spawn(watch_for_updates(
+            state.clone(),
+            config.updates.auto,
+            cancel.clone(),
+        )));
+    }
 
     // Metrics housekeeping: keep today's rollups fresh, prune old raw rows hourly.
     let token = cancel.clone();
@@ -335,6 +359,67 @@ async fn run_certificates(
     let _ = manager.spawn(hostnames, cancel).await;
 }
 
+/// Check for a newer release five minutes after start and then once a day. With `auto`,
+/// install patch and minor releases and ask for a restart.
+async fn watch_for_updates(state: AppState, auto: bool, cancel: CancellationToken) {
+    let mut wait = Duration::from_secs(300);
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return,
+            _ = tokio::time::sleep(wait) => {}
+        }
+        wait = Duration::from_secs(24 * 3600);
+        let Ok(current) = semver::Version::parse(sw_update::CURRENT_VERSION) else {
+            return;
+        };
+        let checked = async {
+            let updater = sw_update::Updater::official()?;
+            let Some(release) = updater.latest().await? else {
+                return Ok(None);
+            };
+            if !release.is_newer_than(&current) {
+                return Ok(None);
+            }
+            if auto && release.auto_installable_from(&current) {
+                let binary = updater.download_verified(&release).await?;
+                sw_update::install(&binary, &std::env::current_exe()?)?;
+                return Ok::<_, sw_update::UpdateError>(Some((release, true)));
+            }
+            Ok(Some((release, false)))
+        }
+        .await;
+        match checked {
+            Ok(Some((release, true))) => {
+                tracing::info!(version = %release.version, "installed an update; restarting");
+                sw_core::db::audit(
+                    state.store.db(),
+                    "system",
+                    "update.install",
+                    Some(&release.version.to_string()),
+                    None,
+                )
+                .await;
+                state.restart.notify_one();
+                return;
+            }
+            Ok(Some((release, false))) => {
+                tracing::info!(version = %release.version, "a newer release is available");
+                *state
+                    .update_available
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(release.version.to_string());
+            }
+            Ok(None) => {
+                *state
+                    .update_available
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = None
+            }
+            Err(error) => tracing::warn!(%error, "update check failed"),
+        }
+    }
+}
+
 /// The address to reach our own listener at.
 fn loopback(addr: SocketAddr) -> SocketAddr {
     if addr.ip().is_unspecified() {
@@ -411,9 +496,11 @@ impl Daemon {
     pub async fn run_until_signal(self) -> anyhow::Result<()> {
         use tokio::signal::unix::{SignalKind, signal};
         let mut term = signal(SignalKind::terminate())?;
+        let restart = self.state.restart.clone();
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
+            _ = restart.notified() => tracing::info!("restart requested"),
         }
         tracing::info!("shutting down");
         self.shutdown().await;

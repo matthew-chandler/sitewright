@@ -26,6 +26,7 @@ pub struct Config {
     pub agent: AgentConfig,
     pub metrics: MetricsConfig,
     pub tls: TlsConfig,
+    pub updates: UpdatesConfig,
 }
 
 /// How the daemon is exposed to the network.
@@ -435,6 +436,26 @@ impl Default for TlsConfig {
             include_admin_host: true,
             precheck: true,
             scan_interval_secs: 30,
+        }
+    }
+}
+
+/// Self-update behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdatesConfig {
+    /// Look for a newer release once a day and show it in Settings.
+    pub check: bool,
+    /// Install patch and minor releases automatically. Major versions never install
+    /// by themselves.
+    pub auto: bool,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check: true,
+            auto: false,
         }
     }
 }

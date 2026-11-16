@@ -159,6 +159,9 @@
 <section>
   <h2>About</h2>
   <p class="muted">Sitewright {{ version }}</p>
+  {% if !update_available.is_empty() %}
+  <p class="msg ok">Version {{ update_available }} is available. On the server, run <code>sitewright update</code>.</p>
+  {% endif %}
   <button type="button" hx-post="/logout">Sign out</button>
 </section>
 {% endblock %}

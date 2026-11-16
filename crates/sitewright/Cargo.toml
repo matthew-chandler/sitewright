@@ -12,6 +12,8 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+sw-update.workspace = true
+semver = "1"
 sw-tls.workspace = true
 sw-agent.workspace = true
 sw-llm.workspace = true

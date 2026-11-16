@@ -349,6 +349,7 @@ struct SettingsPage {
     can_remove_passkey: bool,
     tokens: Vec<TokenRow>,
     version: &'static str,
+    update_available: String,
 }
 
 async fn provider_options(state: &AppState) -> Vec<ProviderOption> {
@@ -858,6 +859,12 @@ async fn settings_page(
         passkeys,
         tokens,
         version: env!("CARGO_PKG_VERSION"),
+        update_available: state
+            .update_available
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default(),
     })
 }
 

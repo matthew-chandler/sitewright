@@ -7,3 +7,4 @@ pub mod cli;
 pub mod client;
 pub mod daemon;
 pub mod prompt;
+pub mod update;
