@@ -42,8 +42,8 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish a release.** `main` is at 1.4.0 and nothing after 1.0.0 is tagged.
-   `git tag -a v1.4.0 -m "Sitewright 1.4.0" && git push origin v1.4.0` publishes it; the
+4. **Optional: publish a release.** `main` is at 1.5.0 and nothing after 1.0.0 is tagged.
+   `git tag -a v1.5.0 -m "Sitewright 1.5.0" && git push origin v1.5.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -196,9 +196,18 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
     have JavaScript under `backend/` answering `/api/`, with its own SQLite database;
     the agent has the `build-backend` skill and the `test_backend`, `backend_logs` and
     `backend_schema` tools. See `docs/backends.md`. Not yet tried from a phone.
-  - **1.5** (secrets, outbound requests, visitor login): next.
+  - **1.5** (secrets, outbound requests, visitor login): merged as version 1.5.0.
+    Owner-managed secrets and approved hosts per site ("Backend access" on the site page,
+    `sitewright backend ...`), `fetch` and `secrets.get` for backends, and built-in
+    visitor accounts (`auth.*`).
+  - **1.6** (LLM access for backends, dashboards over site data): next.
 
 ## Not done, by choice or by circumstance
+
+- The HTTPS certificate test (`sitewright::standalone`) failed 2 times in about 10 full
+  local runs once the suite grew (it polls a local ACME server and timed out under
+  load); alone it passes. It now gets up to two retries (`.config/nextest.toml`). Not
+  investigated further.
 
 - **Docker build of an exported context** was not run: Docker is not installed in WSL.
   The archive layout and digest-pinned Dockerfile are covered by tests.

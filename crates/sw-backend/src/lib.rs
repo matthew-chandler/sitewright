@@ -4,6 +4,7 @@
 //! ([`sandbox`]) so that it can do nothing but exchange messages ([`protocol`]) with the
 //! daemon. See ADR-0006.
 
+pub mod auth;
 pub mod egress;
 pub mod manager;
 pub mod protocol;

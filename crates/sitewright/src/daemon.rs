@@ -90,6 +90,8 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         tracing::warn!(%error, "could not record the pre-migration backup");
     }
 
+    let mut config = config;
+    config.backends.secure_cookies = config.domains.public_scheme == sw_core::config::Scheme::Https;
     let config = Arc::new(config);
     let store = SiteStore::open(db.clone(), data.clone(), &config)
         .await

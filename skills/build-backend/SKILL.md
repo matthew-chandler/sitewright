@@ -1,6 +1,6 @@
 ---
 name: build-backend
-description: Add or change a site's backend - server-side JavaScript under backend/ that answers /api/ requests and stores data in the site's own SQLite database. Use when the site must save or serve data (forms, guestbooks, counters, votes, sign-ups, small APIs), or when changing existing files under backend/.
+description: Add or change a site's backend - server-side JavaScript under backend/ that answers /api/ requests, stores data in the site's own SQLite database, signs visitors in, and calls outside APIs with the owner's keys. Use when the site must save or serve data (forms, guestbooks, counters, votes, sign-ups, small APIs), needs visitor accounts or members-only content, must call another service, or when changing existing files under backend/.
 license: MIT OR Apache-2.0
 metadata:
   author: sitewright
@@ -73,6 +73,7 @@ Start from `assets/index.js` and `assets/0001_create_entries.sql`.
 - **Never edit or delete a migration that has been published.** To change something, add
   the next numbered file. `backend_schema` shows what the live database looks like now.
 - Handlers cannot run `CREATE`, `ALTER` or `DROP`; schema changes belong in migrations.
+- Tables, indexes and views only. `CREATE TRIGGER` is refused.
 - Names are four digits, an underscore and lowercase words: `0002_add_votes.sql`.
 
 ## Rules for handlers
@@ -124,8 +125,14 @@ Rules for outbound calls:
 `test_backend` makes real outbound calls with the real secrets, so test sparingly
 against services that charge or that change data.
 
+## Visitor accounts
+
+When visitors need to sign up and sign in, use the built-in `auth` module. Read
+`references/accounts.md` first. Never write your own password or session handling, and
+never create your own users table.
+
 ## When the user asks for something backends cannot do yet
 
-User accounts with passwords, sending email (unless through an HTTPS API the owner
-approves), file uploads and scheduled jobs are not available yet. Say so plainly in your
-summary, and build the part that is possible.
+Sending email (unless through an HTTPS API the owner approves), password reset by email,
+file uploads, scheduled jobs and triggers in the database are not available. Say so
+plainly in your summary, and build the part that is possible.

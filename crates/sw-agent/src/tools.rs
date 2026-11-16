@@ -193,6 +193,7 @@ pub fn definitions() -> Vec<ToolDef> {
                     "path": { "type": "string", "description": "Path and optional query, for example /api/entries?limit=5" },
                     "body": { "type": "string", "description": "Request body as text. JSON by default." },
                     "content_type": { "type": "string", "description": "Default application/json. Use application/x-www-form-urlencoded to test a form post." },
+                    "cookie": { "type": "string", "description": "A Cookie header to send, for example the name=value part of a set-cookie you got back from a sign-in, to test as a signed-in visitor." },
                     "reset": { "type": "boolean", "description": "Start again from a fresh copy of the live data." },
                 }),
                 &["method", "path"],
@@ -418,6 +419,9 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                         "content-type".to_owned(),
                         text("content_type").unwrap_or("application/json").to_owned(),
                     ));
+                }
+                if let Some(cookie) = text("cookie").filter(|c| !c.is_empty()) {
+                    headers.push(("cookie".to_owned(), cookie.to_owned()));
                 }
                 let request = sw_backend::BackendRequest {
                     method,

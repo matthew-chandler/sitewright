@@ -1,7 +1,7 @@
 # The `sitewright` module
 
 ```js
-import { Router, json, text, html, redirect, HttpError, db, secrets, fetch, log, crypto } from "sitewright";
+import { Router, json, text, html, redirect, HttpError, db, auth, secrets, fetch, log, crypto } from "sitewright";
 ```
 
 ## Router
@@ -51,9 +51,9 @@ Return any of these from a handler:
 
 | | |
 |---|---|
-| `json(data, status = 200)` | JSON |
-| `text(string, status = 200)` | plain text |
-| `html(string, status = 200)` | an HTML page |
+| `json(data, status = 200, headers)` | JSON |
+| `text(string, status = 200, headers)` | plain text |
+| `html(string, status = 200, headers)` | an HTML page |
 | `redirect(location, status = 303)` | a redirect, e.g. after a form post |
 | `new Response(body, { status, headers })` | anything else |
 | a plain object or array | same as `json(...)` |
@@ -90,9 +90,14 @@ await db.batch([                                                         // one 
 - A query may return at most 5000 rows and run for 5 seconds. The database may grow to
   100 MB.
 - Not available in handlers: `CREATE`/`ALTER`/`DROP` (use migrations), `PRAGMA`,
-  `ATTACH`, `BEGIN`/`COMMIT` (use `db.batch`).
+  `ATTACH`, `BEGIN`/`COMMIT` (use `db.batch`). Triggers are not available at all.
 - A constraint violation (for example `UNIQUE`) throws; catch it when it is an expected
   outcome, such as "already voted", and answer 409.
+
+## Visitor accounts
+
+`auth.signUp`, `auth.signIn`, `auth.user`, `auth.requireUser`, `auth.signOut`: see
+`references/accounts.md`.
 
 ## Secrets and outbound requests
 

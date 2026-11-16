@@ -379,6 +379,57 @@ export async function fetch(url, init = {}) {
 }
 globalThis.fetch = fetch;
 
+// ---------------------------------------------------------------- visitor accounts
+
+function authCall(op, args) {
+  const result = call(op, args);
+  if (result && result.error) throw new HttpError(result.error.status, result.error.message);
+  return result;
+}
+let sessionCookieName = null;
+function sessionToken(req) {
+  if (sessionCookieName === null) sessionCookieName = call("auth.cookie_name", {});
+  return req.cookies[sessionCookieName] || null;
+}
+
+/**
+ * Accounts for the site's visitors. Passwords and sessions are handled by Sitewright;
+ * a user is `{ id, email, created_at }`.
+ */
+export const auth = {
+  /** Create an account and sign it in. Returns `{ user, cookie }`; send `cookie` as a `set-cookie` header. */
+  async signUp({ email, password }) {
+    return authCall("auth.signup", { email: String(email ?? ""), password: String(password ?? "") });
+  },
+  /** Returns `{ user, cookie }`, or answers 401 (wrong email or password) or 429 (too many attempts). */
+  async signIn({ email, password }) {
+    return authCall("auth.login", { email: String(email ?? ""), password: String(password ?? "") });
+  },
+  /** The signed-in user for this request, or null. */
+  async user(req) {
+    const token = sessionToken(req);
+    return token ? authCall("auth.session", { token }) : null;
+  },
+  /** The signed-in user, or answer 401. */
+  async requireUser(req) {
+    const user = await auth.user(req);
+    if (!user) throw new HttpError(401, "Please sign in.");
+    return user;
+  },
+  /** End the session. Returns `{ cookie }`; send it as a `set-cookie` header. */
+  async signOut(req) {
+    return authCall("auth.logout", { token: sessionToken(req) });
+  },
+  /** Change a user's password and sign them out everywhere. */
+  async setPassword(userId, password) {
+    return authCall("auth.set_password", { id: userId, password: String(password ?? "") });
+  },
+  /** Delete a user. Delete or reassign their rows in your own tables first. */
+  async deleteUser(userId) {
+    return authCall("auth.delete_user", { id: userId });
+  },
+};
+
 // ---------------------------------------------------------------- dispatch
 
 function normalise(result) {

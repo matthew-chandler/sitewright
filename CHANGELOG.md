@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-16
+
+
 ### Added
 
 - Backend secrets: the owner stores API keys per site (portal, API, or
@@ -16,6 +19,14 @@ All notable changes to this project are documented here. The format follows
   redirects. The agent can request a host with `request_backend_host`; only the owner can
   approve it.
 - Agent tool `backend_access` lists a site's secret names and hosts.
+- Visitor accounts for backends: `auth.signUp`, `auth.signIn`, `auth.user`,
+  `auth.requireUser`, `auth.signOut`. Passwords (Argon2id) and sessions are managed by
+  Sitewright in two protected tables of the site's database.
+- `test_backend` takes a `cookie`, to test as a signed-in visitor.
+
+### Changed
+
+- Site migrations can no longer create triggers.
 
 ## [1.4.0] - 2026-11-16
 

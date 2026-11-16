@@ -38,6 +38,11 @@ use tokio::sync::Mutex;
 
 /// The table that records which migrations ran. Site SQL cannot read or write it.
 const MIGRATIONS_TABLE: &str = "_sitewright_migrations";
+/// Visitor accounts, managed by Sitewright (see `auth.rs`). Site SQL may read them, except
+/// the password hash, so that its own tables can refer to users; it cannot change them.
+pub const USERS_TABLE: &str = "sw_users";
+/// Visitor sessions. Site SQL cannot touch these at all.
+pub const SESSIONS_TABLE: &str = "sw_sessions";
 const PAGE_SIZE: u64 = 4096;
 
 #[derive(Debug, Clone)]
@@ -134,7 +139,20 @@ impl SiteDb {
                 "PRAGMA max_page_count = {pages};
                  CREATE TABLE IF NOT EXISTS {MIGRATIONS_TABLE} (
                      name TEXT PRIMARY KEY, sha256 TEXT NOT NULL, applied_at INTEGER NOT NULL
-                 ) STRICT;"
+                 ) STRICT;
+                 CREATE TABLE IF NOT EXISTS {USERS_TABLE} (
+                     id INTEGER PRIMARY KEY,
+                     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                     password_hash TEXT NOT NULL,
+                     created_at INTEGER NOT NULL
+                 ) STRICT;
+                 CREATE TABLE IF NOT EXISTS {SESSIONS_TABLE} (
+                     token_hash TEXT PRIMARY KEY,
+                     user_id INTEGER NOT NULL REFERENCES {USERS_TABLE} (id) ON DELETE CASCADE,
+                     created_at INTEGER NOT NULL,
+                     expires_at INTEGER NOT NULL
+                 ) STRICT;
+                 CREATE INDEX IF NOT EXISTS sw_sessions_user ON {SESSIONS_TABLE} (user_id);"
             )))
             .execute(&mut conn)
             .await
@@ -306,12 +324,29 @@ impl SiteDb {
         Ok(done)
     }
 
+    /// Run one of Sitewright's own statements on this database, with parameters. For
+    /// the visitor-account code; never given SQL that came from a site.
+    pub(crate) async fn internal_query(
+        &self,
+        sql: &'static str,
+        params: &[Value],
+    ) -> Result<Vec<Value>, String> {
+        let mut conn = self.conn.lock().await;
+        fetch(&mut conn, sql, params, 1000)
+            .await
+            .map_err(|e| match &e {
+                sqlx::Error::Database(db) if db.is_unique_violation() => "unique".to_owned(),
+                _ => format!("database error: {e}"),
+            })
+    }
+
     /// The tables and views with their `CREATE` statements, for showing the agent.
     pub async fn schema(&self) -> Result<Vec<Value>, String> {
         let mut conn = self.conn.lock().await;
         let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT type, name, sql FROM sqlite_master
              WHERE name NOT LIKE 'sqlite_%' AND name <> '{MIGRATIONS_TABLE}'
+               AND name NOT LIKE '{SESSIONS_TABLE}%' AND name <> '{USERS_TABLE}'
                AND name NOT LIKE 'sqlite_autoindex_%' AND sql IS NOT NULL
              ORDER BY type DESC, name"
         )))
@@ -531,12 +566,25 @@ unsafe extern "C" fn authorize(
         }
     };
     let bookkeeping = |table: &str| table.eq_ignore_ascii_case(MIGRATIONS_TABLE);
+    let managed = |table: &str| {
+        table.eq_ignore_ascii_case(USERS_TABLE) || table.eq_ignore_ascii_case(SESSIONS_TABLE)
+    };
     let writes = mode == Mode::Handler as u8 || mode == Mode::Migration as u8;
     let schema = mode == Mode::Migration as u8;
     let allowed = match action {
         ffi::SQLITE_SELECT | ffi::SQLITE_RECURSIVE => true,
         // arg1 is the table.
-        ffi::SQLITE_READ => !bookkeeping(text(arg1)),
+        // arg1 is the table, arg2 the column.
+        ffi::SQLITE_READ => {
+            let table = text(arg1);
+            !bookkeeping(table)
+                && !table.eq_ignore_ascii_case(SESSIONS_TABLE)
+                && !(table.eq_ignore_ascii_case(USERS_TABLE)
+                    && text(arg2).eq_ignore_ascii_case("password_hash"))
+        }
+        ffi::SQLITE_INSERT | ffi::SQLITE_UPDATE | ffi::SQLITE_DELETE if managed(text(arg1)) => {
+            false
+        }
         ffi::SQLITE_INSERT | ffi::SQLITE_UPDATE | ffi::SQLITE_DELETE => {
             let table = text(arg1);
             // Writes to the schema table are how SQLite carries out DDL.
@@ -548,15 +596,24 @@ unsafe extern "C" fn authorize(
         ffi::SQLITE_CREATE_TABLE
         | ffi::SQLITE_CREATE_INDEX
         | ffi::SQLITE_CREATE_VIEW
-        | ffi::SQLITE_CREATE_TRIGGER
         | ffi::SQLITE_DROP_TABLE
         | ffi::SQLITE_DROP_INDEX
         | ffi::SQLITE_DROP_VIEW
         | ffi::SQLITE_DROP_TRIGGER
         | ffi::SQLITE_ALTER_TABLE
         | ffi::SQLITE_REINDEX
-        | ffi::SQLITE_ANALYZE => schema && !bookkeeping(text(arg1)) && !bookkeeping(text(arg2)),
-        // ATTACH, DETACH, PRAGMA, transactions, savepoints, temp objects, virtual tables.
+        | ffi::SQLITE_ANALYZE => {
+            schema
+                && !bookkeeping(text(arg1))
+                && !bookkeeping(text(arg2))
+                && !managed(text(arg1))
+                && !managed(text(arg2))
+        }
+        // Triggers are refused even in migrations: a trigger's body runs with the
+        // rights of whatever statement fires it, including Sitewright's own statements
+        // on the managed tables, which would let site SQL read password hashes.
+        // Also refused: ATTACH, DETACH, PRAGMA, transactions, savepoints, temp objects,
+        // virtual tables.
         _ => false,
     };
     if allowed {
