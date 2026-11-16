@@ -40,6 +40,10 @@ pub struct Limits {
     pub max_workers: usize,
     /// Longest a request waits for its site's worker to become free.
     pub queue_wait: Duration,
+    /// Longest a request may take in all, including the time the daemon spends on its
+    /// host calls (queries, outside requests, model calls), which `request_timeout`
+    /// does not count.
+    pub max_wall: Duration,
 }
 
 impl Default for Limits {
@@ -53,6 +57,7 @@ impl Default for Limits {
             idle: Duration::from_secs(300),
             max_workers: 8,
             queue_wait: Duration::from_secs(10),
+            max_wall: Duration::from_secs(90),
         }
     }
 }
@@ -254,10 +259,16 @@ impl Backends {
             body: request.body,
             timeout_ms: u64::try_from(limits.request_timeout.as_millis()).unwrap_or(u64::MAX),
         });
-        // The worker enforces the timeout itself; the extra second is for a worker that
-        // cannot, and then it is killed.
-        let deadline = limits.request_timeout + Duration::from_secs(1);
-        let outcome = tokio::time::timeout(deadline, self.converse(target, worker, message)).await;
+        // The worker enforces the handler's own time limit and does not count the time
+        // it waits for host calls. Here: the same budget (plus a second, for a worker
+        // that cannot enforce it), extended by the time host calls actually took, and
+        // an overall ceiling.
+        let budget = limits.request_timeout + Duration::from_secs(1);
+        let outcome = tokio::time::timeout(
+            limits.max_wall,
+            self.converse(target, worker, message, budget),
+        )
+        .await;
         slot.last_used.store(self.now_ms(), Ordering::Relaxed);
         match outcome {
             Ok(Ok(response)) if response.body.len() > limits.max_response_body => {
@@ -284,11 +295,16 @@ impl Backends {
         target: &Target,
         worker: &mut Worker,
         message: ToWorker,
+        budget: Duration,
     ) -> Result<BackendResponse, (BackendError, bool)> {
         let crashed = |e: std::io::Error| (BackendError::Crashed(e.to_string()), false);
         worker.send(&message).await.map_err(crashed)?;
+        let mut deadline = tokio::time::Instant::now() + budget;
         loop {
-            match worker.receive().await.map_err(crashed)? {
+            let frame = tokio::time::timeout_at(deadline, worker.receive())
+                .await
+                .map_err(|_| (BackendError::Timeout, false))?;
+            match frame.map_err(crashed)? {
                 FromWorker::Response(response) => return Ok(response),
                 FromWorker::Failed { message, fatal } => {
                     let error = if message.contains("took too long") {
@@ -302,7 +318,10 @@ impl Backends {
                     self.inner.host.log(target, &level, &message);
                 }
                 FromWorker::HostCall { op, args } => {
-                    let reply = match self.inner.host.call(target, &op, args).await {
+                    let asked = tokio::time::Instant::now();
+                    let answer = self.inner.host.call(target, &op, args).await;
+                    deadline += asked.elapsed();
+                    let reply = match answer {
                         Ok(value) => ToWorker::HostReply {
                             ok: Some(value),
                             error: None,

@@ -216,6 +216,40 @@ impl ProviderSource for Providers {
     }
 }
 
+/// Backends reach models through the same provider list as the agent, by provider id.
+impl sw_backend::ModelSource for Providers {
+    fn list(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<Vec<sw_backend::ModelInfo>, String>> {
+        Box::pin(async move {
+            Ok(Providers::list(self)
+                .await?
+                .into_iter()
+                .map(|view| sw_backend::ModelInfo {
+                    name: view.config.id,
+                    kind: view.config.kind.as_str().to_owned(),
+                    model: view.config.model,
+                    is_default: view.is_default,
+                })
+                .collect())
+        })
+    }
+
+    fn provider<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<Arc<dyn LlmProvider>, String>> {
+        Box::pin(ProviderSource::provider(self, Some(name)))
+    }
+
+    fn price(&self, model: &str) -> Option<(f64, f64)> {
+        self.config
+            .llm
+            .price(model)
+            .map(|p| (p.input_per_mtok, p.output_per_mtok))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT enabled, models, monthly_requests, per_minute FROM site_llm WHERE site_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_llm",
+            "name": "enabled"
+          }
+        }
+      },
+      {
+        "name": "models",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_llm",
+            "name": "models"
+          }
+        }
+      },
+      {
+        "name": "monthly_requests",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_llm",
+            "name": "monthly_requests"
+          }
+        }
+      },
+      {
+        "name": "per_minute",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_llm",
+            "name": "per_minute"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f3f3b4cf31b49b3482a2b946f88d51e7da1e560c8dd8ce8b815ab0460c6b7f07"
+}

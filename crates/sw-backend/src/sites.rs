@@ -148,6 +148,7 @@ struct SiteHost {
     secrets: SiteSecrets,
     egress: Egress,
     auth: crate::auth::Auth,
+    llm: crate::llm::LlmGateway,
     dbs: SiteDbs,
     logs: Mutex<HashMap<i64, VecDeque<LogLine>>>,
 }
@@ -312,6 +313,7 @@ impl Host for SiteHost {
                     }
                 }
                 "http.fetch" => self.fetch(target, args).await,
+                "llm.chat" => self.llm.chat(target.site_id, &args).await,
                 op if op.starts_with("auth.") => {
                     let db = self.db(target).await?;
                     self.auth.call(target.site_id, &db, op, &args).await
@@ -421,6 +423,7 @@ impl SiteBackends {
         };
         let host = Arc::new(SiteHost {
             secrets: SiteSecrets::new(data.site_secrets_file()),
+            llm: crate::llm::LlmGateway::new(pool.clone()),
             pool,
             egress,
             auth: crate::auth::Auth::new(secure),
@@ -622,6 +625,11 @@ impl SiteBackends {
 
     pub fn remove_secret(&self, site_id: i64, name: &str) -> Result<bool, String> {
         self.inner.host.secrets.remove(site_id, name)
+    }
+
+    /// The gateway through which backends reach AI models: settings, usage, models.
+    pub fn llm(&self) -> &crate::llm::LlmGateway {
+        &self.inner.host.llm
     }
 
     /// Forget the secrets of sites that have been purged. Call at start-up and after

@@ -20,6 +20,7 @@ path = "src/bin/worker.rs"
 [dependencies]
 sw-core.workspace = true
 sw-sites.workspace = true
+sw-llm.workspace = true
 getrandom = "0.4.3"
 rquickjs = { version = "0.14.0", features = ["loader"] }
 futures-util = "0.3.34"
@@ -40,6 +41,7 @@ rustix = { version = "1.1.6", features = ["process"] }
 seccompiler = "0.5.0"
 
 [dev-dependencies]
+futures-util = "0.3.34"
 wiremock = "0.6.5"
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

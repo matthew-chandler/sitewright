@@ -34,6 +34,7 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/secrets", post(secret_save))
         .route("/sites/{name}/secrets/{secret}/delete", post(secret_delete))
         .route("/sites/{name}/hosts", post(host_approve))
+        .route("/sites/{name}/llm", post(llm_save))
         .route("/sites/{name}/hosts/{host}/delete", post(host_delete))
         .route("/sites/{name}/export/{format}", get(site_export))
         .route("/sites/{name}/dashboard", get(dashboard_page))
@@ -280,6 +281,58 @@ struct ReleaseRow {
     changes: String,
 }
 
+struct LlmModelOption {
+    name: String,
+    detail: String,
+    checked: bool,
+}
+
+/// A site's AI model access, for the site page.
+struct LlmView {
+    enabled: bool,
+    monthly_requests: i64,
+    per_minute: i64,
+    models: Vec<LlmModelOption>,
+    /// For example "12 of 1000 requests this month, $0.0312".
+    usage: String,
+}
+
+async fn llm_view(state: &AppState, site_id: i64) -> LlmView {
+    let llm = state.backend.llm();
+    let settings = llm.settings(site_id).await.unwrap_or_default();
+    let models = llm
+        .available()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| LlmModelOption {
+            checked: settings.models.contains(&m.name),
+            detail: format!(
+                "{}{}",
+                m.model,
+                if m.is_default { ", the default" } else { "" }
+            ),
+            name: m.name,
+        })
+        .collect();
+    let usage = match llm.usage(site_id).await {
+        Ok(u) => format!(
+            "{} of {} requests this month{}",
+            u.requests,
+            settings.monthly_requests,
+            u.cost_usd.map(|c| format!(", ${c:.4}")).unwrap_or_default()
+        ),
+        Err(_) => String::new(),
+    };
+    LlmView {
+        enabled: settings.enabled,
+        monthly_requests: settings.monthly_requests,
+        per_minute: settings.per_minute,
+        models,
+        usage,
+    }
+}
+
 struct BackendLogRow {
     when: String,
     level: String,
@@ -319,6 +372,7 @@ struct SitePage {
     /// Outside hosts the backend may reach, or has asked to.
     backend_hosts: Vec<sw_backend::SiteHostEntry>,
     backends_enabled: bool,
+    llm: LlmView,
     zone: String,
     /// Hostnames other than the primary one, with a note for those that redirect.
     other_hostnames: Vec<String>,
@@ -617,6 +671,7 @@ async fn site_page(
         secrets: state.backend.secret_names(info.site.id).unwrap_or_default(),
         backend_hosts: state.backend.hosts(info.site.id).await.unwrap_or_default(),
         backends_enabled: state.backend.enabled(),
+        llm: llm_view(&state, info.site.id).await,
         backend,
         running_run,
         zone: state.config.domains.default_zone().to_owned(),
@@ -820,6 +875,41 @@ async fn host_delete(
     };
     match state.backend.remove_host(site.id, &host).await {
         Ok(_) => hx_refresh(),
+        Err(e) => error_fragment(e),
+    }
+}
+
+/// The AI access form. Checkboxes arrive as repeated `model` fields, so the body is read
+/// as pairs.
+async fn llm_save(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> Response {
+    let site = match state.store.get(&name).await {
+        Ok(site) => site,
+        Err(e) => return error_fragment(e.to_string()),
+    };
+    let value = |key: &str| {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.trim().to_owned())
+    };
+    let number =
+        |key: &str, default: i64| value(key).and_then(|v| v.parse().ok()).unwrap_or(default);
+    let settings = sw_backend::LlmSettings {
+        enabled: value("enabled").is_some(),
+        models: fields
+            .iter()
+            .filter(|(k, _)| k == "model")
+            .map(|(_, v)| v.clone())
+            .collect(),
+        monthly_requests: number("monthly_requests", 1000),
+        per_minute: number("per_minute", 20),
+    };
+    match state.backend.llm().set_settings(site.id, &settings).await {
+        Ok(()) => hx_refresh(),
         Err(e) => error_fragment(e),
     }
 }

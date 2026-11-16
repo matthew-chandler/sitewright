@@ -110,6 +110,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         worker_command()?,
     );
     store.set_release_hooks(Arc::new(backend.clone()));
+    backend.llm().set_models(Arc::new(providers.clone()));
     let agent = Agent::new(
         store.clone(),
         domains.clone(),

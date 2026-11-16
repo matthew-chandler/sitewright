@@ -171,6 +171,25 @@ pub enum BackendCommand {
     AllowHost { site: String, host: String },
     /// Remove a host from a site's list.
     RemoveHost { site: String, host: String },
+    /// Show or change whether a site's backend may use AI models, and how much.
+    Ai {
+        site: String,
+        /// Allow the site's backend to use AI models.
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        /// Stop the site's backend from using AI models.
+        #[arg(long)]
+        disable: bool,
+        /// Comma-separated names of the models it may use. Empty: the default model.
+        #[arg(long, value_delimiter = ',')]
+        models: Option<Vec<String>>,
+        /// Most requests per calendar month.
+        #[arg(long)]
+        monthly: Option<i64>,
+        /// Most requests per minute.
+        #[arg(long)]
+        per_minute: Option<i64>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -550,6 +569,71 @@ async fn backend(loaded: &Loaded, command: BackendCommand) -> anyhow::Result<()>
                 )
                 .await?;
             print_hosts(&hosts);
+        }
+        BackendCommand::Ai {
+            site,
+            enable,
+            disable,
+            models,
+            monthly,
+            per_minute,
+        } => {
+            let path = format!("/v1/sites/{site}/llm");
+            let changes =
+                enable || disable || models.is_some() || monthly.is_some() || per_minute.is_some();
+            let view: Value = if changes {
+                let mut body = serde_json::Map::new();
+                if enable || disable {
+                    body.insert("enabled".into(), json!(enable));
+                }
+                if let Some(models) = models {
+                    let models: Vec<String> =
+                        models.into_iter().filter(|m| !m.is_empty()).collect();
+                    body.insert("models".into(), json!(models));
+                }
+                if let Some(n) = monthly {
+                    body.insert("monthly_requests".into(), json!(n));
+                }
+                if let Some(n) = per_minute {
+                    body.insert("per_minute".into(), json!(n));
+                }
+                client.post(&path, &Value::Object(body)).await?
+            } else {
+                client.get(&path).await?
+            };
+            let settings = &view["settings"];
+            println!(
+                "AI models: {}",
+                if settings["enabled"] == true {
+                    "allowed"
+                } else {
+                    "not allowed"
+                }
+            );
+            let names: Vec<&str> = settings["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            println!(
+                "Models:    {}",
+                if names.is_empty() {
+                    "the default model".to_owned()
+                } else {
+                    names.join(", ")
+                }
+            );
+            println!(
+                "Limits:    {} per month, {} per minute",
+                settings["monthly_requests"], settings["per_minute"]
+            );
+            println!(
+                "Used:      {} requests this month ({} tokens in, {} out)",
+                view["usage"]["requests"],
+                view["usage"]["input_tokens"],
+                view["usage"]["output_tokens"]
+            );
         }
         BackendCommand::RemoveHost { site, host } => {
             let hosts: Value = client

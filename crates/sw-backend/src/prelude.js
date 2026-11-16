@@ -379,6 +379,24 @@ export async function fetch(url, init = {}) {
 }
 globalThis.fetch = fetch;
 
+// ---------------------------------------------------------------- AI models
+
+/**
+ * Ask an AI model through Sitewright. No key is needed: the site's owner decides whether
+ * the site may use models, which ones, and how often.
+ */
+export const llm = {
+  /**
+   * `{ model?, system?, messages: [{ role: "user" | "assistant", content }] }` →
+   * `{ text, model, usage: { inputTokens, outputTokens } }`. A plain string is one
+   * user message.
+   */
+  async chat(request) {
+    const body = typeof request === "string" ? { messages: [{ role: "user", content: request }] } : request;
+    return call("llm.chat", body);
+  },
+};
+
 // ---------------------------------------------------------------- visitor accounts
 
 function authCall(op, args) {

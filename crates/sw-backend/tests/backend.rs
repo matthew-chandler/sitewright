@@ -32,8 +32,19 @@ impl Host for TestHost {
                 .unwrap()
                 .push((target.site.clone(), op.to_owned(), args.clone()));
             match op {
+                // "sleep N" stands in for a slow query, outside request or model call.
+                "db.query"
+                    if args["sql"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("sleep ")) =>
+                {
+                    let ms = args["sql"].as_str().unwrap()[6..].parse().unwrap();
+                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    Ok(json!([]))
+                }
                 "db.query" => Ok(json!([{"id": 1, "name": "Ada"}, {"id": 2, "name": "Bo"}])),
                 "db.run" => Ok(json!({"changes": 1, "lastInsertRowid": 3})),
+
                 _ => Err(format!("unknown operation {op}")),
             }
         })
@@ -576,4 +587,55 @@ async fn oversized_bodies_are_refused() {
         send(&backends, &t, source, request("GET", "/api/x?n=101", "")).await,
         Err(BackendError::TooLarge)
     ));
+}
+
+#[tokio::test]
+async fn time_spent_in_host_calls_does_not_count_against_the_handler() {
+    let (backends, _) = backends_with(Limits {
+        request_timeout: Duration::from_millis(300),
+        max_wall: Duration::from_millis(1500),
+        ..Limits::default()
+    });
+    let source = r#"
+import { Router, text, db } from "sitewright";
+const app = new Router();
+app.get("/api/wait/:ms", async (req) => { await db.query("sleep " + req.params.ms); return text("ok"); });
+app.get("/api/wait-then-spin", async () => { await db.query("sleep 400"); for (;;) {} });
+export default app;
+"#;
+    let t = target(1, "v");
+    // Twice the handler's own limit, spent waiting for the daemon: fine.
+    let started = std::time::Instant::now();
+    assert_eq!(
+        send(&backends, &t, source, request("GET", "/api/wait/600", ""))
+            .await
+            .unwrap()
+            .body,
+        "ok"
+    );
+    assert!(started.elapsed() >= Duration::from_millis(600));
+    // The handler's own limit still holds after a wait.
+    let err = send(
+        &backends,
+        &t,
+        source,
+        request("GET", "/api/wait-then-spin", ""),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, BackendError::Timeout), "{err:?}");
+    // And there is a ceiling on the whole request.
+    let started = std::time::Instant::now();
+    let err = send(&backends, &t, source, request("GET", "/api/wait/5000", ""))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, BackendError::Timeout), "{err:?}");
+    assert!(started.elapsed() < Duration::from_millis(2500));
+    assert_eq!(
+        send(&backends, &t, source, request("GET", "/api/wait/1", ""))
+            .await
+            .unwrap()
+            .body,
+        "ok"
+    );
 }

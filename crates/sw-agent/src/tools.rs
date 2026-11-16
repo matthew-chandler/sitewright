@@ -213,6 +213,11 @@ pub fn definitions() -> Vec<ToolDef> {
             none(),
         ),
         def(
+            "list_models",
+            "The AI models this server has, by the name a backend passes to llm.chat({ model }), and whether this site's backend may use each. Use it when the user refers to a model or \"agent\" by name, or asks to switch models.",
+            none(),
+        ),
+        def(
             "request_backend_host",
             "Ask the site's owner to allow the backend to send HTTPS requests to an outside host. The owner approves it on the site's page; until then requests to it fail. You cannot approve it yourself.",
             schema(
@@ -459,6 +464,34 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                     "note": "Read a secret in a handler with `await secrets.get(\"NAME\")`. Only the owner can add secrets or approve hosts, on the site's page in the portal.",
                 }))
             }
+            "list_models" => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let llm = backends.llm();
+                let settings = llm.settings(site.id).await.map_err(ToolOutcome::error)?;
+                let allowed = llm.allowed(site.id).await.map_err(ToolOutcome::error)?;
+                let models: Vec<Value> = llm
+                    .available()
+                    .await
+                    .map_err(ToolOutcome::error)?
+                    .into_iter()
+                    .map(|m| {
+                        json!({
+                            "name": m.name,
+                            "provider": m.kind,
+                            "model": m.model,
+                            "server_default": m.is_default,
+                            "this_site_may_use_it": allowed.iter().any(|a| a.name == m.name),
+                        })
+                    })
+                    .collect();
+                ToolOutcome::ok(json!({
+                    "models": models,
+                    "ai_enabled_for_this_site": settings.enabled,
+                    "site_default": allowed.first().map(|m| m.name.clone()),
+                    "note": "Only the owner can turn AI access on for a site or change which models it may use, under \"Backend access\" on the site's page. If the model the user wants is not allowed, write the code for it anyway and tell them to allow it there.",
+                }))
+            }
             "request_backend_host" => {
                 let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
                 let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
@@ -585,6 +618,7 @@ mod tests {
                 "test_backend",
                 "backend_logs",
                 "backend_access",
+                "list_models",
                 "request_backend_host",
                 "backend_schema",
                 "load_skill",
