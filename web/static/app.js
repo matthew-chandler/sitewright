@@ -19,6 +19,15 @@
     if (target) target.innerHTML = '<p class="msg error" role="alert">Could not reach the server.</p>';
   });
 
+  // Ctrl+Enter (Cmd+Enter on a Mac) in a text box submits its form.
+  document.body.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
+    var target = event.target;
+    if (!target || target.tagName !== "TEXTAREA" || !target.form) return;
+    event.preventDefault();
+    if (target.form.requestSubmit) target.form.requestSubmit(); else target.form.submit();
+  });
+
   // New site: suggest a name from the prompt until the user edits the name.
   var prompt = document.getElementById("prompt");
   var name = document.getElementById("name");

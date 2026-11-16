@@ -7,6 +7,9 @@
 </div>
 <blockquote class="prompt">{{ prompt }}</blockquote>
 <p class="muted">{{ model }} <span id="run-usage"></span></p>
+<p class="muted" id="run-clock" data-started="{{ started_at }}" data-finished="{{ finished_at }}">
+  Started <time id="run-started"></time> · <span id="run-elapsed"></span>
+</p>
 
 <div id="run-log" class="log" data-run="{{ id }}" data-site="{{ site }}" aria-live="polite"></div>
 
@@ -17,7 +20,8 @@
     <span class="status"></span>
   </form>
   {% endif %}
-  <a class="button primary" id="run-open" href="/sites/{{ site }}" hidden>View site</a>
+  <a class="button{% if !running %} primary{% endif %}" id="run-open" href="/sites/{{ site }}">Back to site</a>
+  {% if running %}<span class="muted" id="run-hint">The run continues if you leave this page.</span>{% endif %}
 </div>
 
 <section id="run-confirm" class="confirm" hidden>

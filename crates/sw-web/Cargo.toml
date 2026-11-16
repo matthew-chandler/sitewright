@@ -41,6 +41,7 @@ rust-embed = "8.14.0"
 mime_guess = "2.0.5"
 async-trait = "0.1.92"
 toml = "1.2.1"
+pulldown-cmark = { version = "0.13.6", default-features = false, features = ["html"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

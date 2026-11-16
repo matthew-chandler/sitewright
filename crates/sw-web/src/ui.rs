@@ -284,6 +284,8 @@ struct SitePage {
     url: String,
     published: bool,
     busy: bool,
+    /// The run in progress on this site, if any.
+    running_run: Option<i64>,
     providers: Vec<ProviderOption>,
     runs: Vec<RunRow>,
     releases: Vec<ReleaseRow>,
@@ -299,6 +301,10 @@ struct RunPage {
     status: &'static str,
     running: bool,
     model: String,
+    /// Unix milliseconds.
+    started_at: i64,
+    /// Unix milliseconds; 0 while the run is in progress.
+    finished_at: i64,
 }
 
 struct ProviderRow {
@@ -527,16 +533,15 @@ async fn site_page(
             changes,
         });
     }
-    let runs = state
-        .agent
-        .list(Some(&name), 5)
-        .await
-        .unwrap_or_default()
+    let recent = state.agent.list(Some(&name), 5).await.unwrap_or_default();
+    let running_run = recent
         .iter()
-        .map(RunRow::from)
-        .collect();
+        .find(|run| run.status == RunStatus::Running)
+        .map(|run| run.id);
+    let runs = recent.iter().map(RunRow::from).collect();
     render(SitePage {
         chrome,
+        running_run,
         busy: state.agent.is_busy(&name),
         name,
         title: info.site.title,
@@ -733,6 +738,8 @@ async fn run_page(
         status: run.status.as_str(),
         running: run.status == RunStatus::Running,
         model: format!("{} / {}", run.provider, run.model),
+        started_at: run.created_at,
+        finished_at: run.finished_at.unwrap_or(0),
     })
 }
 

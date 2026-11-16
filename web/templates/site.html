@@ -13,7 +13,7 @@
 <section>
   <h2>Edit with a prompt</h2>
   {% if busy %}
-  <p class="msg">A run is in progress on this site. Open it under Runs below.</p>
+  <p class="msg">A run is in progress on this site.{% if let Some(id) = running_run %} <a href="/runs/{{ id }}">Watch it</a>.{% else %} Open it under Runs below.{% endif %}</p>
   {% else %}
   <form hx-post="/sites/{{ name }}/prompt" hx-target="find .status" hx-disabled-elt="find button">
     <label for="prompt" class="sr-only">What should change?</label>

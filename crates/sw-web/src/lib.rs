@@ -9,6 +9,7 @@ pub mod auth;
 pub mod client_ip;
 pub mod dispatch;
 pub mod error;
+pub mod markdown;
 pub mod providers;
 pub mod site;
 pub mod socket;
