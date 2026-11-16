@@ -101,8 +101,8 @@
 {% if backends_enabled %}
 <section>
   <h2>Backend access</h2>
-  <details{% if !secrets.is_empty() || !backend_hosts.is_empty() %} open{% endif %}>
-    <summary>Secrets and outside hosts</summary>
+  <details{% if !secrets.is_empty() || !backend_hosts.is_empty() || llm.enabled %} open{% endif %}>
+    <summary>Secrets, AI models and outside hosts</summary>
     <h3>Secrets</h3>
     <p class="muted">API keys and other values this site's backend can read by name. A value is never shown again after you save it, and the agent only sees the names.</p>
     {% if !secrets.is_empty() %}
@@ -127,6 +127,28 @@
       <button type="submit">Save secret</button>
       <div class="status" aria-live="polite"></div>
     </form>
+
+    <h3>AI models</h3>
+    <p class="muted">Let this site's backend ask your AI models, through Sitewright, without a key of its own. Visitors can trigger these requests, so the limits below are what bounds the cost.{% if !llm.usage.is_empty() %} Used: {{ llm.usage }}.{% endif %}</p>
+    {% if llm.models.is_empty() %}
+    <p class="empty">No model is configured. Add one in Settings.</p>
+    {% else %}
+    <form hx-post="/sites/{{ name }}/llm" hx-target="find .status" hx-disabled-elt="find button">
+      <label class="check"><input type="checkbox" name="enabled" value="1" {% if llm.enabled %}checked{% endif %}> Allow this site's backend to use AI models</label>
+      <fieldset>
+        <legend>Models it may use (none ticked: the default model only)</legend>
+        {% for m in llm.models %}
+        <label class="check"><input type="checkbox" name="model" value="{{ m.name }}" {% if m.checked %}checked{% endif %}> <code>{{ m.name }}</code> <span class="muted">{{ m.detail }}</span></label>
+        {% endfor %}
+      </fieldset>
+      <label for="llm-monthly">Requests per month, at most</label>
+      <input id="llm-monthly" name="monthly_requests" type="number" min="1" max="1000000" required value="{{ llm.monthly_requests }}">
+      <label for="llm-minute">Requests per minute, at most</label>
+      <input id="llm-minute" name="per_minute" type="number" min="1" max="600" required value="{{ llm.per_minute }}">
+      <button type="submit">Save</button>
+      <div class="status" aria-live="polite"></div>
+    </form>
+    {% endif %}
 
     <h3>Outside hosts</h3>
     <p class="muted">The backend can send HTTPS requests only to hosts you approve here.</p>

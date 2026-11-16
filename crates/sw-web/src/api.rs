@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/sites/{name}/secrets",
             get(list_secrets).post(set_secret).delete(remove_secret),
         )
+        .route("/v1/sites/{name}/llm", get(get_site_llm).post(set_site_llm))
         .route(
             "/v1/sites/{name}/backend-hosts",
             get(list_backend_hosts)
@@ -390,6 +391,60 @@ async fn remove_backend_host(
         .await
         .map_err(ApiError::bad_request)?;
     list_backend_hosts(State(state), Path(name)).await
+}
+
+async fn site_llm_view(state: &AppState, site_id: i64) -> ApiResult<Json<serde_json::Value>> {
+    let llm = state.backend.llm();
+    Ok(Json(serde_json::json!({
+        "settings": llm.settings(site_id).await.map_err(ApiError::bad_request)?,
+        "usage": llm.usage(site_id).await.map_err(ApiError::bad_request)?,
+        "models": llm.available().await.map_err(ApiError::bad_request)?,
+    })))
+}
+
+/// A site's AI model access: settings, this month's usage and the models there are.
+async fn get_site_llm(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let site = state.store.get(&name).await?;
+    site_llm_view(&state, site.id).await
+}
+
+/// Fields left out keep their current value.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SiteLlmBody {
+    enabled: Option<bool>,
+    models: Option<Vec<String>>,
+    monthly_requests: Option<i64>,
+    per_minute: Option<i64>,
+}
+
+async fn set_site_llm(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SiteLlmBody>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let site = state.store.get(&name).await?;
+    let llm = state.backend.llm();
+    let mut settings = llm.settings(site.id).await.map_err(ApiError::bad_request)?;
+    if let Some(enabled) = body.enabled {
+        settings.enabled = enabled;
+    }
+    if let Some(models) = body.models {
+        settings.models = models;
+    }
+    if let Some(n) = body.monthly_requests {
+        settings.monthly_requests = n;
+    }
+    if let Some(n) = body.per_minute {
+        settings.per_minute = n;
+    }
+    llm.set_settings(site.id, &settings)
+        .await
+        .map_err(ApiError::bad_request)?;
+    site_llm_view(&state, site.id).await
 }
 
 fn default_true() -> bool {

@@ -125,6 +125,32 @@ Rules for outbound calls:
 `test_backend` makes real outbound calls with the real secrets, so test sparingly
 against services that charge or that change data.
 
+## Using AI models
+
+A backend can ask an AI model with `llm.chat`, through Sitewright. It needs no API key
+and no approved host. Whether a site may do this, with which models and how often, is
+the owner's setting.
+
+- Call `list_models` first. It shows the models by name, which ones this site may use,
+  and whether AI access is on for the site at all.
+- Put the model's name in one constant at the top of `backend/index.js`
+  (`const MODEL = "fast";`) and pass it as `llm.chat({ model: MODEL, ... })`. When the
+  user later says "use the new model" or names one, `list_models` tells you which name
+  they mean, and the change is that one line.
+- If access is off, or the model the user wants is not allowed for this site, you
+  cannot change that. Write the code anyway, make the page show a friendly message when
+  the call fails, and tell the owner in your summary to turn it on under "Backend
+  access" on the site's page.
+- Every visitor can trigger the route, and each call counts against the site's monthly
+  allowance. Limit calls per visitor (see the template's rate limit), cap the length of
+  what visitors may send, and store answers that can be reused.
+- Put your instructions in `system`, and the visitor's text in a `user` message. Never
+  paste visitor text into `system`. Treat the model's answer as untrusted text: show it
+  with `textContent`, and do not run SQL or make decisions about access from it.
+- A model call can take many seconds. Show a "thinking" state on the page.
+
+The call's shape is in `references/api.md`. `test_backend` makes real model calls.
+
 ## Visitor accounts
 
 When visitors need to sign up and sign in, use the built-in `auth` module. Read

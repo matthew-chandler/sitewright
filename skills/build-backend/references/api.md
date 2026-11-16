@@ -1,7 +1,7 @@
 # The `sitewright` module
 
 ```js
-import { Router, json, text, html, redirect, HttpError, db, auth, secrets, fetch, log, crypto } from "sitewright";
+import { Router, json, text, html, redirect, HttpError, db, auth, llm, secrets, fetch, log, crypto } from "sitewright";
 ```
 
 ## Router
@@ -98,6 +98,31 @@ await db.batch([                                                         // one 
 
 `auth.signUp`, `auth.signIn`, `auth.user`, `auth.requireUser`, `auth.signOut`: see
 `references/accounts.md`.
+
+## AI models
+
+```js
+const MODEL = "fast";                       // a name from list_models
+
+const answer = await llm.chat({
+  model: MODEL,                             // leave out to use the site's default
+  system: "You answer questions about hiking in Washington in two sentences.",
+  messages: [
+    { role: "user", content: question },    // roles: "user" and "assistant"; the last is "user"
+  ],
+});
+answer.text;                                // the model's reply
+answer.usage;                               // { inputTokens, outputTokens }
+
+await llm.chat("One-off question as a plain string");
+```
+
+- Throws when AI access is off for the site, the model is not allowed for it, the
+  site's per-minute or monthly limit is reached, or the model fails or takes longer
+  than 60 seconds. Catch it and answer 503 with a short message.
+- Text in, text out: no images, no tool calling, no streaming. To keep a conversation,
+  store the messages in the database and send them again.
+- Prompts are limited to 200 KB and 100 messages.
 
 ## Secrets and outbound requests
 

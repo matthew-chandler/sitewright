@@ -69,6 +69,42 @@ email. To remove an account or sign someone out yourself, stop the daemon and ed
 site's database: `sqlite3 <data>/sites/<name>/data/site.db "DELETE FROM sw_users WHERE
 email = '...'"`.
 
+## AI models
+
+A backend can ask one of your configured models with `llm.chat`, without a key of its
+own: the daemon makes the call with its own credentials. A model is known to backends
+and to the agent by its provider id (the name you gave it in Settings or in
+`[[llm.providers]]`).
+
+Per site, under **Backend access** on the site's page or with the CLI:
+
+```sh
+sitewright backend ai hikes                                   # show settings and usage
+sitewright backend ai hikes --enable --monthly 500 --per-minute 10
+sitewright backend ai hikes --models fast,claude              # which models it may use
+sitewright backend ai hikes --disable
+```
+
+- **Off by default.** Until you turn it on for a site, `llm.chat` fails there.
+- **Which models.** With no list, the site may use the default model only. With a list,
+  exactly those; the first is the site's default.
+- **Limits.** Requests per minute (default 20) and per calendar month, UTC (default
+  1000). Visitors can trigger these calls, so these two numbers bound what a site can
+  cost you. Requests refused by a limit are not sent to the model.
+- **Accounting.** Every call is recorded with the site, model, tokens and, when you
+  configured a price for the model, cost. The site's page shows the month's total.
+  This spend is separate from `agent.daily_spend_cap_usd`, which covers building sites.
+- Backends get plain chat: text in, text out, no tools.
+
+**Changing models.** Add a model in Settings, allow it for the site, and tell the agent
+in a prompt to use it by name. The agent has a `list_models` tool to see the names and
+keeps the model's name in one constant in the backend.
+
+A model call can take longer than the 10-second handler limit. Time a handler spends
+waiting for the daemon (a query, an outside request, a model call) does not count
+against that limit; each of those has its own (5 s, 8 s and 60 s), and a request may
+take 90 seconds in all. While one request waits, the site's other API requests queue.
+
 ## Secrets and outside services
 
 A backend can call other services over HTTPS, under two controls that only you hold.
@@ -155,8 +191,7 @@ be published.
 
 ## What backends cannot do yet
 
-LLM access through Sitewright, email, scheduled jobs, binary uploads and npm packages.
-The first is on the [roadmap](ROADMAP.md).
+Email, scheduled jobs, binary uploads, streaming responses and npm packages.
 
 ## Backups
 

@@ -222,12 +222,21 @@ fn run<R: Read + 'static, W: Write + 'static>(mut channel: Channel<R, W>) -> io:
     let loaded: Result<(), String> = context.with(|ctx| {
         let host = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
         let ch = channel.clone();
+        let call_deadline = deadline.clone();
         let call = Function::new(
             ctx.clone(),
             move |ctx: Ctx<'_>, op: String, args: String| -> rquickjs::Result<String> {
                 let args = serde_json::from_str(&args)
                     .map_err(|_| Exception::throw_message(&ctx, "arguments are not valid JSON"))?;
-                match ch.borrow_mut().host_call(op, args) {
+                // Time spent waiting for the daemon (a query, an outside request, a
+                // model call) is not the handler's own: each of those has its own
+                // limit, enforced by the daemon. Push the deadline back by the wait.
+                let asked = Instant::now();
+                let answer = ch.borrow_mut().host_call(op, args);
+                if let Some(d) = call_deadline.get() {
+                    call_deadline.set(Some(d + asked.elapsed()));
+                }
+                match answer {
                     Ok(value) => Ok(value.to_string()),
                     Err(message) => Err(Exception::throw_message(&ctx, &message)),
                 }

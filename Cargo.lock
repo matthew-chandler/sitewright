@@ -3884,6 +3884,7 @@ dependencies = [
  "sha2 0.11.1",
  "sqlx",
  "sw-core",
+ "sw-llm",
  "sw-sites",
  "tempfile",
  "thiserror 2.0.21",

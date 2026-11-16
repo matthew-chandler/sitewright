@@ -404,3 +404,197 @@ async fn visitors_sign_up_sign_in_and_see_only_their_own_data() {
     assert_eq!(back.status, 200);
     assert_ne!(cookie_of(&back), ada_cookie);
 }
+
+/// Two named models answered by scripted providers, with a price for one of them.
+struct TestModels {
+    fast: std::sync::Arc<sw_llm::mock::ScriptedProvider>,
+    smart: std::sync::Arc<sw_llm::mock::ScriptedProvider>,
+}
+
+impl sw_backend::ModelSource for TestModels {
+    fn list(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<Vec<sw_backend::ModelInfo>, String>> {
+        Box::pin(async {
+            Ok(["fast", "smart"]
+                .iter()
+                .map(|name| sw_backend::ModelInfo {
+                    name: (*name).to_owned(),
+                    kind: "mock".into(),
+                    model: "mock-model".into(),
+                    is_default: *name == "fast",
+                })
+                .collect())
+        })
+    }
+
+    fn provider<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<std::sync::Arc<dyn sw_llm::LlmProvider>, String>>
+    {
+        Box::pin(async move {
+            match name {
+                "fast" => Ok(self.fast.clone() as std::sync::Arc<dyn sw_llm::LlmProvider>),
+                "smart" => Ok(self.smart.clone() as std::sync::Arc<dyn sw_llm::LlmProvider>),
+                other => Err(format!("no model {other}")),
+            }
+        })
+    }
+
+    fn price(&self, _model: &str) -> Option<(f64, f64)> {
+        Some((1.0, 2.0))
+    }
+}
+
+const ASSISTANT: &str = r#"
+import { Router, json, llm } from "sitewright";
+const app = new Router();
+app.post("/api/ask", async (req) => {
+  const { question, model } = await req.json();
+  const answer = await llm.chat({ model, system: "Be brief.", messages: [{ role: "user", content: question }] });
+  return json(answer);
+});
+app.get("/api/quick", async () => json(await llm.chat("hello")));
+export default app;
+"#;
+
+#[tokio::test]
+async fn backends_reach_models_only_as_far_as_the_owner_allows() {
+    use sw_llm::mock::{ScriptedProvider, Turn};
+
+    let env = env().await;
+    let b = &env.backends;
+    let (site_id, name) = (env.site_id, &env.name);
+    let models = std::sync::Arc::new(TestModels {
+        fast: std::sync::Arc::new(ScriptedProvider::repeating(Turn::text("fast says hi"))),
+        smart: std::sync::Arc::new(ScriptedProvider::repeating(Turn::text("smart says hi"))),
+    });
+    b.llm().set_models(models.clone());
+    let source = || BackendSource {
+        files: [("backend/index.js".to_owned(), ASSISTANT.to_owned())].into(),
+        migrations: Vec::new(),
+    };
+    let ask = |body: Value| async move {
+        b.test_draft(
+            site_id,
+            name,
+            source(),
+            req("POST", "/api/ask", body, None),
+            false,
+        )
+        .await
+        .unwrap()
+    };
+    let failed_with = |out: &sw_backend::DraftOutcome, text: &str| {
+        out.status == 500 && out.logs.iter().any(|l| l.message.contains(text))
+    };
+
+    // Off until the owner turns it on; nothing reaches a model.
+    let out = ask(json!({"question": "hi"})).await;
+    assert!(failed_with(&out, "not turned on for this site"), "{out:?}");
+    assert!(b.llm().allowed(env.site_id).await.unwrap().is_empty());
+    assert!(models.fast.requests().is_empty());
+
+    // On, with no list: the default model only.
+    let mut settings = b.llm().settings(env.site_id).await.unwrap();
+    assert!(!settings.enabled);
+    settings.enabled = true;
+    settings.per_minute = 4;
+    b.llm().set_settings(env.site_id, &settings).await.unwrap();
+    let out = ask(json!({"question": "What is 2+2?"})).await;
+    assert_eq!(out.status, 200, "{out:?}");
+    let answer: Value = serde_json::from_str(&out.body).unwrap();
+    assert_eq!(answer["text"], "fast says hi");
+    assert_eq!(answer["model"], "fast");
+    let sent = &models.fast.requests()[0];
+    assert_eq!(sent.system, "Be brief.");
+    assert!(sent.tools.is_empty(), "backends get plain chat, no tools");
+    assert!(
+        matches!(&sent.messages[0], sw_llm::Message::User { content } if content == "What is 2+2?")
+    );
+    let out = ask(json!({"question": "hi", "model": "smart"})).await;
+    assert!(
+        failed_with(&out, "may not use the model \"smart\""),
+        "{out:?}"
+    );
+    assert!(models.smart.requests().is_empty());
+
+    // The owner allows the other model; unknown names are refused when saving.
+    settings.models = vec!["smart".into(), "nope".into()];
+    assert!(b.llm().set_settings(env.site_id, &settings).await.is_err());
+    settings.models = vec!["smart".into()];
+    b.llm().set_settings(env.site_id, &settings).await.unwrap();
+    let out = ask(json!({"question": "hi", "model": "smart"})).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&out.body).unwrap()["text"],
+        "smart says hi"
+    );
+    // With a list, "fast" is no longer allowed, and the site's default is the first listed.
+    let out = ask(json!({"question": "hi"})).await;
+    assert_eq!(
+        serde_json::from_str::<Value>(&out.body).unwrap()["model"],
+        "smart"
+    );
+    let quick = b
+        .test_draft(
+            env.site_id,
+            &env.name,
+            source(),
+            req("GET", "/api/quick", Value::Null, None),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(quick.status, 200);
+
+    // Usage is recorded per site, with cost.
+    let usage = b.llm().usage(env.site_id).await.unwrap();
+    assert_eq!(usage.requests, 4);
+    assert!(usage.cost_usd.is_some());
+    assert_eq!(b.llm().usage(env.other_id).await.unwrap().requests, 0);
+
+    // Per-minute limit (4), then the monthly cap.
+    let out = ask(json!({"question": "one too many"})).await;
+    assert!(
+        failed_with(&out, "too many AI requests right now"),
+        "{out:?}"
+    );
+    settings.per_minute = 600;
+    settings.monthly_requests = 4;
+    b.llm().set_settings(env.site_id, &settings).await.unwrap();
+    let out = ask(json!({"question": "over the cap"})).await;
+    assert!(
+        failed_with(&out, "used its 4 AI requests for this month"),
+        "{out:?}"
+    );
+    assert_eq!(b.llm().usage(env.site_id).await.unwrap().requests, 4);
+
+    // Malformed requests cost nothing.
+    settings.monthly_requests = 1000;
+    b.llm().set_settings(env.site_id, &settings).await.unwrap();
+    let bad = b
+        .test_draft(
+            env.site_id,
+            &env.name,
+            BackendSource {
+                files: [(
+                    "backend/index.js".to_owned(),
+                    "import { llm, json } from 'sitewright'; export default async () => json(await llm.chat({ messages: [{ role: 'system', content: 'x' }] }));".to_owned(),
+                )]
+                .into(),
+                migrations: Vec::new(),
+            },
+            req("GET", "/api/x", Value::Null, None),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status, 500);
+    assert_eq!(b.llm().usage(env.site_id).await.unwrap().requests, 4);
+    for invalid in [(0, 20), (1000, 0), (2_000_000, 20)] {
+        settings.monthly_requests = invalid.0;
+        settings.per_minute = invalid.1;
+        assert!(b.llm().set_settings(env.site_id, &settings).await.is_err());
+    }
+}
