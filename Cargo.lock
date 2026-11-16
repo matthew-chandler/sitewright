@@ -3869,13 +3869,18 @@ dependencies = [
 name = "sw-backend"
 version = "1.2.0"
 dependencies = [
+ "futures-util",
  "getrandom 0.4.3",
  "libc",
+ "libsqlite3-sys",
  "rquickjs",
  "rustix",
  "seccompiler",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
+ "sqlx",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
