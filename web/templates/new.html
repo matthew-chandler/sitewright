@@ -27,6 +27,9 @@
   </select>
   {% endif %}
 
+  <label class="check"><input type="checkbox" name="containerize" value="1"> Containerize this site</label>
+  <p class="hint">Keeps a container image of the site ready to download, so it can run somewhere else without Sitewright. You can turn this on later too.</p>
+
   <button class="primary big" type="submit">Create site</button>
   <div class="status" aria-live="polite"></div>
 </form>

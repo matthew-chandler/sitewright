@@ -13,6 +13,7 @@ pub mod sandbox;
 pub mod secrets;
 pub mod sitedb;
 pub mod sites;
+pub mod standalone;
 pub mod worker;
 
 pub use egress::Egress;
@@ -23,4 +24,5 @@ pub use manager::{
 };
 pub use sitedb::{DbLimits, Migration, ReadRows, RunResult, SiteDb, SiteDbs};
 pub use sites::{BackendSource, DraftOutcome, LogLine, SiteBackends, SiteHostEntry};
+pub use standalone::{MANIFEST_FILE, ManifestLlm, ManifestModel, SiteManifest, model_env_prefix};
 pub use worker::{ENTRY, WORKER_ARG, worker_main};

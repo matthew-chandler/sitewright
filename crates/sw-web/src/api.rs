@@ -42,6 +42,8 @@ pub fn router(state: AppState) -> Router {
             get(list_secrets).post(set_secret).delete(remove_secret),
         )
         .route("/v1/sites/{name}/llm", get(get_site_llm).post(set_site_llm))
+        .route("/v1/sites/{name}/containerize", post(containerize_site))
+        .route("/v1/sites/{name}/container/{part}", get(container_part))
         .route(
             "/v1/sites/{name}/backend-hosts",
             get(list_backend_hosts)
@@ -447,6 +449,101 @@ async fn set_site_llm(
     site_llm_view(&state, site.id).await
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContainerizeBody {
+    #[serde(default = "default_true")]
+    on: bool,
+}
+
+/// Mark or unmark a site as containerized.
+async fn containerize_site(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<ContainerizeBody>,
+) -> ApiResult<Json<serde_json::Value>> {
+    state
+        .store
+        .set_containerized(&name, body.on, Author::User)
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "site": name, "containerized": body.on }),
+    ))
+}
+
+async fn container_part(
+    State(state): State<AppState>,
+    Path((name, part)): Path<(String, String)>,
+) -> ApiResult<axum::response::Response> {
+    container_download(&state, &name, &part).await
+}
+
+/// One of a site's container downloads: `image` (the archive for `docker load`),
+/// `guide` (the setup guide, Markdown) or `data` (a copy of the site's database).
+pub async fn container_download(
+    state: &AppState,
+    name: &str,
+    part: &str,
+) -> ApiResult<axum::response::Response> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+    let attachment = |file_name: &str, content_type: &'static str| {
+        [
+            (header::CONTENT_TYPE, content_type.to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file_name}\""),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ]
+    };
+    let stream = |path: std::path::PathBuf| async move {
+        let file = tokio::fs::File::open(&path).await.map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the file could not be read",
+            )
+        })?;
+        Ok::<_, ApiError>(axum::body::Body::from_stream(
+            tokio_util::io::ReaderStream::new(file),
+        ))
+    };
+    match part {
+        "image" => {
+            let image = crate::container::build(state, name)
+                .await
+                .map_err(ApiError::bad_request)?;
+            Ok((
+                attachment(&image.file_name, "application/x-tar"),
+                stream(image.path).await?,
+            )
+                .into_response())
+        }
+        "guide" => {
+            let package = crate::container::describe(state, name)
+                .await
+                .map_err(ApiError::bad_request)?;
+            Ok((
+                attachment(&format!("{name}-SETUP.md"), "text/markdown; charset=utf-8"),
+                crate::container::guide(&package),
+            )
+                .into_response())
+        }
+        "data" => {
+            let path = crate::container::data_snapshot(state, name)
+                .await
+                .map_err(ApiError::bad_request)?
+                .ok_or_else(|| ApiError::bad_request(format!("{name} has no database")))?;
+            Ok((
+                attachment(&format!("{name}-data.db"), "application/vnd.sqlite3"),
+                stream(path).await?,
+            )
+                .into_response())
+        }
+        _ => Err(ApiError::new(StatusCode::NOT_FOUND, "no such download")),
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -537,6 +634,9 @@ struct StartRunBody {
     #[serde(default)]
     new: bool,
     provider: Option<String>,
+    /// With `new`: mark the site as containerized.
+    #[serde(default)]
+    containerize: bool,
 }
 
 async fn start_run(
@@ -550,6 +650,7 @@ async fn start_run(
             prompt: body.prompt,
             new: body.new,
             provider: body.provider,
+            containerize: body.containerize,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(run)))

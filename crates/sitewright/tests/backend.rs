@@ -525,3 +525,148 @@ async fn secrets_and_hosts_are_managed_by_the_owner_and_only_named_to_the_agent(
 
     t.daemon.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_site_is_containerized_at_creation_or_later_and_packaged_without_secrets() {
+    use common::{llm_config, mock_model, text_turn, tool_turn, write_secrets};
+
+    let model = mock_model(vec![
+        tool_turn(
+            "create_site",
+            json!({"name": "shop", "title": "Corner Shop"}),
+        ),
+        tool_turn(
+            "write_file",
+            json!({"path": "index.html", "content": INDEX}),
+        ),
+        tool_turn(
+            "write_file",
+            json!({"path": "backend/index.js", "content": BACKEND}),
+        ),
+        tool_turn(
+            "write_file",
+            json!({"path": "backend/migrations/0001_entries.sql", "content": MIGRATION}),
+        ),
+        tool_turn("publish_site", json!({"message": "Shop"})),
+        text_turn("Done."),
+    ])
+    .await;
+    let t = common::boot_with(&llm_config(&model)).await;
+    write_secrets(&t);
+    let admin = t.admin();
+    let store = &t.daemon.state.store;
+
+    // Chosen at creation: the run that creates the site marks it.
+    let run: Value = admin
+        .post(
+            "/v1/runs",
+            &json!({"site": "shop", "prompt": "a shop", "new": true, "containerize": true}),
+        )
+        .await
+        .unwrap();
+    let id = run["id"].as_i64().unwrap();
+    tool_results(&t, id).await; // reads the stream to its end
+    assert!(store.containerized("shop").await.unwrap());
+
+    // Chosen later, and undone again.
+    let dir = t.site_dir("plain", &[("index.html", INDEX)]);
+    t.cli(&["site", "import", "plain", path_str(&dir)])
+        .await
+        .unwrap();
+    assert!(!store.containerized("plain").await.unwrap());
+    t.cli(&["site", "containerize", "plain"]).await.unwrap();
+    assert!(store.containerized("plain").await.unwrap());
+    t.cli(&["site", "containerize", "plain", "--off"])
+        .await
+        .unwrap();
+    assert!(!store.containerized("plain").await.unwrap());
+
+    // The shop uses a secret, an outside host and an AI model.
+    let _: Value = admin
+        .post(
+            "/v1/sites/shop/secrets",
+            &json!({"name": "PAY_KEY", "value": "pk-live-topsecret-123"}),
+        )
+        .await
+        .unwrap();
+    t.cli(&["backend", "allow-host", "shop", "api.pay.test"])
+        .await
+        .unwrap();
+    t.cli(&["backend", "ai", "shop", "--enable", "--monthly", "250"])
+        .await
+        .unwrap();
+
+    // The guide names every variable and holds no value.
+    let guide = String::from_utf8(
+        admin
+            .get_bytes("/v1/sites/shop/container/guide")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    for expected in [
+        "# Running Corner Shop in a container",
+        "docker load -i shop-image.tar",
+        "| `PAY_KEY` |",
+        "| `LLM_MOCK_API_KEY` |",
+        "--env-file shop.env",
+        "-v shop-data:/data",
+        "- `api.pay.test`",
+        "250 per month",
+        "import-data /in/shop-data.db",
+    ] {
+        assert!(
+            guide.contains(expected),
+            "missing {expected:?} in:\n{guide}"
+        );
+    }
+    assert!(!guide.contains("pk-live-topsecret-123"));
+
+    // The image: a docker archive whose site layer has the files, the manifest and the
+    // guide, and no secret anywhere.
+    let out = t.dir.path().join("out");
+    t.cli(&["site", "image", "shop", "-o", path_str(&out)])
+        .await
+        .unwrap();
+    let image = std::fs::read(out.join("shop-image.tar")).unwrap();
+    assert!(out.join("shop-SETUP.md").is_file() && out.join("shop-data.db").is_file());
+    let contains = |needle: &[u8]| image.windows(needle.len()).any(|w| w == needle);
+    assert!(contains(b"manifest.json") && contains(b"sitewright-site/shop:"));
+    assert!(contains(b"site/backend/index.js") && contains(b"site/index.html"));
+    assert!(contains(br#""secrets": ["#) || contains(b"\"PAY_KEY\""));
+    assert!(contains(b"LLM_MOCK_API_KEY"), "the guide is in the image");
+    assert!(!contains(b"pk-live-topsecret-123"));
+    // The provider key from secrets.toml is not in it either.
+    let provider_key = std::fs::read_to_string(t.daemon.data.secrets_file()).unwrap();
+    let key = provider_key.split('"').nth(1).unwrap();
+    assert!(
+        key.len() >= 6 && !contains(key.as_bytes()),
+        "a provider key is in the image"
+    );
+
+    // A site that was never published has nothing to package.
+    t.cli(&["site", "create", "empty"]).await.unwrap();
+    assert!(
+        admin
+            .get_bytes("/v1/sites/empty/container/image")
+            .await
+            .is_err()
+    );
+    // A static site packages too, with no data and no secrets section.
+    let guide = String::from_utf8(
+        admin
+            .get_bytes("/v1/sites/plain/container/guide")
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(guide.contains("This site needs no secrets.") && !guide.contains("/data"));
+    assert!(
+        admin
+            .get_bytes("/v1/sites/plain/container/data")
+            .await
+            .is_err()
+    );
+
+    t.daemon.shutdown().await;
+}

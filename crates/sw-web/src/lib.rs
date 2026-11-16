@@ -7,6 +7,7 @@ pub mod admin;
 pub mod api;
 pub mod auth;
 pub mod client_ip;
+pub mod container;
 pub mod dispatch;
 pub mod error;
 pub mod markdown;

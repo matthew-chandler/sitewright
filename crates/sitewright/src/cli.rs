@@ -44,6 +44,11 @@ pub enum Command {
     Init(crate::setup::InitArgs),
     /// Check the installation and report anything that needs attention.
     Doctor,
+    /// Serve one packaged site on its own, without the daemon. This is what a
+    /// containerized site runs; see docs/containers.md.
+    RunSite(crate::runsite::RunSiteArgs),
+    /// Put a database downloaded from Sitewright into a packaged site's data directory.
+    ImportData(crate::runsite::ImportDataArgs),
     /// Manage sites.
     #[command(subcommand)]
     Site(SiteCommand),
@@ -151,6 +156,23 @@ pub enum SiteCommand {
     },
     /// Change a site's title.
     Title { name: String, title: String },
+    /// Mark a site as containerized, and print how to get its image.
+    Containerize {
+        name: String,
+        /// Stop containerizing the site.
+        #[arg(long)]
+        off: bool,
+    },
+    /// Download a site's container image, its setup guide and (if it has any) its data.
+    Image {
+        name: String,
+        /// Directory to write the files into. Default: the current directory.
+        #[arg(long, short, default_value = ".")]
+        output: PathBuf,
+        /// Leave out the copy of the site's database.
+        #[arg(long)]
+        no_data: bool,
+    },
     /// Attach, detach or promote a site's hostnames.
     #[command(subcommand)]
     Hostname(HostnameCommand),
@@ -207,12 +229,24 @@ pub enum HostnameCommand {
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    // A packaged site has no configuration file and no daemon to talk to.
+    match cli.command {
+        Command::RunSite(args) => {
+            init_tracing();
+            return crate::runsite::run(args).await;
+        }
+        Command::ImportData(args) => return crate::runsite::import_data(&args),
+        _ => {}
+    }
     let loaded = Config::load(cli.global.config.as_deref(), cli.global.data_dir.as_deref())?;
     match cli.command {
         Command::Serve { listen } => {
             init_tracing();
             let daemon = crate::daemon::start(loaded, listen).await?;
             daemon.run_until_signal().await
+        }
+        Command::RunSite(_) | Command::ImportData(_) => {
+            unreachable!("handled before the configuration is loaded")
         }
         Command::Init(args) => crate::setup::init(&loaded, args),
         Command::Doctor => crate::setup::doctor(&loaded).await,
@@ -419,6 +453,52 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
                 )
                 .await?;
             print_info(&info);
+        }
+        SiteCommand::Containerize { name, off } => {
+            let _: Value = client
+                .post(
+                    &format!("/v1/sites/{name}/containerize"),
+                    &json!({ "on": !off }),
+                )
+                .await?;
+            if off {
+                println!("{name} is no longer containerized.");
+            } else {
+                println!(
+                    "{name} is containerized. Get its image and setup guide with:\n  sitewright site image {name}"
+                );
+            }
+        }
+        SiteCommand::Image {
+            name,
+            output,
+            no_data,
+        } => {
+            std::fs::create_dir_all(&output)
+                .with_context(|| format!("cannot create {}", output.display()))?;
+            let mut parts = vec![
+                ("image", format!("{name}-image.tar")),
+                ("guide", format!("{name}-SETUP.md")),
+            ];
+            if !no_data {
+                parts.push(("data", format!("{name}-data.db")));
+            }
+            for (part, file_name) in parts {
+                let fetched = client
+                    .get_bytes(&format!("/v1/sites/{name}/container/{part}"))
+                    .await;
+                let bytes = match fetched {
+                    Ok(bytes) => bytes,
+                    // A site without a backend has no data to copy.
+                    Err(_) if part == "data" => continue,
+                    Err(e) => return Err(e),
+                };
+                let path = output.join(&file_name);
+                std::fs::write(&path, &bytes)
+                    .with_context(|| format!("cannot write {}", path.display()))?;
+                println!("Wrote {} ({} bytes).", path.display(), bytes.len());
+            }
+            println!("Next: read {name}-SETUP.md. In short: docker load -i {name}-image.tar");
         }
         SiteCommand::Rename {
             name,

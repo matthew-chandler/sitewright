@@ -76,6 +76,9 @@ jobs:
           printf '#!/bin/sh\nexec "%s" __backend-worker\n' "$PWD/target/x86_64-unknown-linux-musl/release/sitewright" > "$RUNNER_TEMP/worker"
           chmod +x "$RUNNER_TEMP/worker"
           SW_BACKEND_TEST_WORKER="$RUNNER_TEMP/worker" cargo test -p sw-backend --test backend
+      # Containerized sites: package a site with the static binary, then load and run
+      # the image with the runner's Docker.
+      - run: scripts/container-smoke.sh target/x86_64-unknown-linux-musl/release/sitewright
 
   skills:
     name: validate built-in skills

@@ -31,6 +31,9 @@ One minute later:     https://hikes.example.com
   seccomp-jailed worker per site, with its own SQLite database, built-in visitor
   accounts, and access to your API keys, approved outside hosts and AI models only as
   far as you allow. A worker uses about 4 MB. See [Backends](docs/backends.md).
+- **Take a site with you.** Any site, backend included, can be packaged as a ~25 MB
+  container image that runs without Sitewright, with a generated guide to the secrets it
+  needs. No Docker is required on the server to build it.
 - **Any model, any registrar.** Adapters for OpenAI-compatible APIs (OpenAI, Azure OpenAI,
   OpenRouter, Groq, Ollama), Anthropic and Gemini. You add one wildcard DNS record at
   whatever DNS host you use; Sitewright verifies it.
@@ -84,6 +87,7 @@ Full instructions: [docs/install.md](docs/install.md).
 | [Providers](docs/providers.md) | Setting up each LLM provider |
 | [Skills](docs/skills.md) | Built-in skills and writing your own |
 | [Metrics](docs/metrics.md) | What is collected, privacy, dashboards |
+| [Containers](docs/containers.md) | Packaging a site as an image that runs without Sitewright |
 | [Backends](docs/backends.md) | Server-side code and a database per site, and how they are sandboxed |
 | [Operations](docs/operations.md) | Backup, moving servers, updates, troubleshooting |
 | [Security](docs/security.md) | Threat model |

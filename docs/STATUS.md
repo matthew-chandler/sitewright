@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx block for the domain move)_
+_Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on main; waiting on the nginx block for the domain move)_
 
 ## Needs from Matthew
 
@@ -42,8 +42,8 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish a release.** `main` is at 1.6.0 and nothing after 1.0.0 is tagged.
-   `git tag -a v1.6.0 -m "Sitewright 1.6.0" && git push origin v1.6.0` publishes it; the
+4. **Optional: publish a release.** `main` is at 1.7.0; 1.6.0 is published.
+   `git tag -a v1.7.0 -m "Sitewright 1.7.0" && git push origin v1.7.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -205,8 +205,15 @@ _Last updated: 2026-11-16 (1.4.0 on main: site backends; waiting on the nginx bl
     Tried with the real model: it built a working AI-backed page, and usage was counted.
     Dashboard panels can also read the site's own database, read-only
     (`"source": "site"`). Merged as version 1.6.0.
-  - **1.7** (other backend frameworks): optional on the roadmap, and not started. My
-    advice is to use 1.4 to 1.6 for a while first; say so if you want it built now.
+  - **Containerized sites** (your request of 2026-11-16): done as version 1.7.0. Mark a
+    site as containerized at creation or later; its Container page has the image, a
+    setup guide written for that site, and its data. The image runs the site without a
+    Sitewright server (`sitewright run-site`). See `docs/containers.md`, ADR-0007.
+    Checked here: the image's contents, and the site running from the image's unpacked
+    filesystem. Checked in CI only: `docker load` and `docker run` (no Docker on this
+    machine or the VPS).
+  - **Other backend frameworks** (optional on the roadmap): not started. My advice is
+    still to wait; say so if you want it built.
 
 ## Not done, by choice or by circumstance
 

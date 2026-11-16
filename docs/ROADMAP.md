@@ -220,3 +220,9 @@ I would decide whether to build this after living with 1.4 to 1.6 for a while.
 Offline copy of the release signing key, README screenshots, `.claude/settings.json`,
 clean-up of the `.dev` hostnames, and publishing 1.1.0. Details are in
 `docs/STATUS.md`.
+
+## Added after approval
+
+- **Containerized sites** (requested 2026-11-16, released as 1.7.0): see
+  `docs/containers.md` and ADR-0007. The version number 1.7 was used for this; "other
+  backend frameworks" above remains optional and unbuilt, and would be a later release.

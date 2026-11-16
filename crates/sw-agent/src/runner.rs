@@ -43,6 +43,8 @@ pub struct RunRequest {
     pub new: bool,
     /// Provider id; `None` for the default.
     pub provider: Option<String>,
+    /// With `new`: mark the site as containerized when it is created.
+    pub containerize: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -299,6 +301,7 @@ impl Agent {
             run_id,
             site: name.to_string(),
             may_create: request.new,
+            containerize: request.new && request.containerize,
             prompt,
             provider,
             events,
@@ -434,6 +437,7 @@ struct Job {
     run_id: i64,
     site: String,
     may_create: bool,
+    containerize: bool,
     prompt: String,
     provider: Arc<dyn LlmProvider>,
     events: broadcast::Sender<(i64, RunEvent)>,
@@ -491,6 +495,7 @@ impl Job {
             backends: self.inner.backends.get().cloned(),
             site: self.site.clone(),
             may_create: self.may_create,
+            containerize_on_create: self.containerize,
             http_port: self
                 .inner
                 .config
