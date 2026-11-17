@@ -116,6 +116,25 @@ async fn serve(
                 json!({"sessionId": session, "workspacePath": "/tmp/none"})
             }
             "session.send" => json!({"messageId": "m1"}),
+            "session.accounts.login.begin" => json!({
+                "flowId": "flow-1",
+                "step": {
+                    "kind": "device-code",
+                    "userCode": "ABCD-1234",
+                    "verificationUri": "https://github.com/login/device",
+                    "expiresIn": 900,
+                    "interval": 5,
+                },
+            }),
+            // First the runtime asks to keep the credentials in a file, then finishes.
+            "session.accounts.login.advance" if request["params"]["input"] == "yes" => json!({
+                "kind": "completed",
+                "result": {"status": "completed", "login": "octocat", "host": "github.com"},
+            }),
+            "session.accounts.login.advance" => json!({
+                "kind": "completed",
+                "result": {"status": "needs-plaintext-consent"},
+            }),
             _ => json!({}),
         };
         write_framed(
@@ -439,4 +458,48 @@ async fn dropping_a_response_midway_does_not_leave_the_session_parked() {
         .unwrap();
     assert_eq!(again.stop, Some(StopReason::ToolUse));
     assert_eq!(sent(&seen, "session.create").len(), 2);
+}
+
+#[tokio::test]
+async fn signing_in_shows_a_code_and_finishes_in_the_background() {
+    use sw_llm::copilot::{SignIn, sign_in_state, sign_in_with};
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let fake = Fake {
+        script: Script::PlainAnswer,
+        seen: seen.clone(),
+    };
+    assert_eq!(sign_in_state(), SignIn::Idle);
+    let shown = sign_in_with(&fake).await.unwrap();
+    assert_eq!(
+        shown,
+        SignIn::Waiting {
+            user_code: "ABCD-1234".into(),
+            verification_uri: "https://github.com/login/device".into(),
+        }
+    );
+    let begin = &sent(&seen, "session.accounts.login.begin")[0]["params"];
+    assert_eq!(begin["kind"], "githubDotCom");
+    assert_eq!(begin["method"], "device-code");
+
+    let mut state = sign_in_state();
+    for _ in 0..100 {
+        if !matches!(state, SignIn::Waiting { .. }) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        state = sign_in_state();
+    }
+    assert_eq!(
+        state,
+        SignIn::Done {
+            login: Some("octocat".into())
+        }
+    );
+    // Consent to file storage was given exactly once.
+    let advances = sent(&seen, "session.accounts.login.advance");
+    assert_eq!(advances.len(), 2);
+    assert_eq!(advances[1]["params"]["input"], "yes");
+    // The sign-in session offers the runtime nothing to do.
+    let create = &sent(&seen, "session.create")[0]["params"];
+    assert_eq!(create["availableTools"], json!(["sitewright_no_tools"]));
 }

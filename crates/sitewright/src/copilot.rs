@@ -118,7 +118,7 @@ pub async fn install(data_dir: &Path, from: Option<&Path>) -> anyhow::Result<()>
         program.display(),
         size / 1_000_000
     );
-    println!("Next: `sitewright copilot check` with a GitHub token in COPILOT_GITHUB_TOKEN.");
+    println!("Next: `sitewright copilot login`, then `sitewright copilot check`.");
     Ok(())
 }
 
@@ -187,6 +187,64 @@ fn set_mode(path: &Path, mode: u32) -> anyhow::Result<()> {
         .with_context(|| format!("setting permissions on {}", path.display()))
 }
 
+fn require_runtime(data_dir: &Path) -> anyhow::Result<()> {
+    sw_llm::copilot::set_default_runtime(runtime_program(data_dir));
+    let program = sw_llm::copilot::runtime_path().context("no runtime path")?;
+    if !program.is_file() {
+        bail!(
+            "the Copilot runtime is not at {}; run `sitewright copilot install` first",
+            program.display()
+        );
+    }
+    Ok(())
+}
+
+/// Sign in with a GitHub account: print a code, wait until it is entered at GitHub.
+pub async fn login(data_dir: &Path) -> anyhow::Result<()> {
+    use sw_llm::copilot::SignIn;
+    require_runtime(data_dir)?;
+    println!("Starting the Copilot runtime ...");
+    let mut state = sw_llm::copilot::sign_in_start().await?;
+    if let SignIn::Waiting {
+        user_code,
+        verification_uri,
+    } = &state
+    {
+        println!();
+        println!("  Open  {verification_uri}");
+        println!("  Enter {user_code}");
+        println!();
+        println!("Waiting for you to approve it on GitHub (Ctrl+C to give up) ...");
+    }
+    while matches!(state, SignIn::Waiting { .. }) {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        state = sw_llm::copilot::sign_in_state();
+    }
+    match state {
+        SignIn::Done { login } => {
+            println!(
+                "Signed in{}. Sitewright did not see or store the credentials; the runtime keeps them in {}.",
+                login.map(|l| format!(" as {l}")).unwrap_or_default(),
+                runtime_dir(data_dir).join("home").display()
+            );
+            println!("Next: `sitewright copilot check`.");
+            Ok(())
+        }
+        SignIn::Failed { message } => bail!("sign-in failed: {message}"),
+        SignIn::Idle | SignIn::Waiting { .. } => bail!("sign-in did not start"),
+    }
+}
+
+/// Forget the stored GitHub sign-in.
+pub fn logout(data_dir: &Path) -> anyhow::Result<()> {
+    sw_llm::copilot::set_default_runtime(runtime_program(data_dir));
+    sw_llm::copilot::sign_out().context("removing the stored sign-in")?;
+    println!(
+        "Signed out. To also revoke access, remove \"GitHub Copilot CLI\" under GitHub Settings > Applications."
+    );
+    Ok(())
+}
+
 /// Resident memory of a process, current and peak, in megabytes.
 fn memory_mb(pid: u32) -> Option<(u64, u64)> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
@@ -204,23 +262,18 @@ fn memory_mb(pid: u32) -> Option<(u64, u64)> {
 /// Start the runtime, list the models, make one model call with a tool, and report how
 /// much memory the runtime used.
 pub async fn check(data_dir: &Path, model: Option<String>) -> anyhow::Result<()> {
-    sw_llm::copilot::set_default_runtime(runtime_program(data_dir));
-    let program = sw_llm::copilot::runtime_path().context("no runtime path")?;
-    if !program.is_file() {
-        bail!(
-            "the Copilot runtime is not at {}; run `sitewright copilot install` first",
-            program.display()
-        );
-    }
+    require_runtime(data_dir)?;
+    let program = runtime_program(data_dir);
+    // A token in the environment wins; otherwise use the stored GitHub sign-in.
     let token = TOKEN_VARS
         .iter()
-        .find_map(|name| std::env::var(name).ok().filter(|v| !v.trim().is_empty()))
-        .with_context(|| {
-            format!(
-                "set a GitHub token with the \"Copilot Requests\" permission in {}",
-                TOKEN_VARS[0]
-            )
-        })?;
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.trim().is_empty()));
+    if token.is_none() {
+        println!(
+            "No token in {}; using the stored GitHub sign-in.",
+            TOKEN_VARS[0]
+        );
+    }
     let config = |model: &str| ProviderConfig {
         id: "copilot-check".into(),
         kind: ProviderKind::Copilot,
@@ -235,11 +288,11 @@ pub async fn check(data_dir: &Path, model: Option<String>) -> anyhow::Result<()>
     };
 
     println!("Runtime: {}", program.display());
-    let lister = Copilot::new(&config("unused"), Some(token.clone()))?;
+    let lister = Copilot::new(&config("unused"), token.clone())?;
     let models = lister
         .models()
         .await
-        .context("the runtime started, but listing models failed (is the token valid?)")?;
+        .context("could not sign in or list models (run `sitewright copilot login` first, or check the token)")?;
     println!("Started and signed in. Models this account can use:");
     for m in &models {
         println!("  {m}");
@@ -254,7 +307,7 @@ pub async fn check(data_dir: &Path, model: Option<String>) -> anyhow::Result<()>
         None => bail!("the account has no models"),
     };
     println!("Testing a model call with a tool, using {model} ...");
-    let provider = Copilot::new(&config(&model), Some(token))?;
+    let provider = Copilot::new(&config(&model), token)?;
     // Sample memory while the call runs: the runtime stops as soon as it is over.
     let peak = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let test = {
@@ -285,7 +338,7 @@ pub async fn check(data_dir: &Path, model: Option<String>) -> anyhow::Result<()>
         bail!("the Copilot check failed");
     }
     println!(
-        "Copilot works. Add it in the portal under Settings, kind \"GitHub Copilot\", model {model}."
+        "Copilot works. Add it in the portal under Settings: kind \"GitHub Copilot\", model {model}, key left empty."
     );
     Ok(())
 }

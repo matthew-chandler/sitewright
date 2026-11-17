@@ -47,7 +47,7 @@
       </select>
       <label for="p-base">Base URL</label>
       <input id="p-base" name="base_url" type="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="https://api.openai.com/v1">
-      <p class="hint">Required for OpenAI-compatible providers. Azure: <code>https://RESOURCE.openai.azure.com/openai/v1/</code>. Leave empty for GitHub Copilot; its key is a GitHub token with the "Copilot Requests" permission.</p>
+      <p class="hint">Required for OpenAI-compatible providers. Azure: <code>https://RESOURCE.openai.azure.com/openai/v1/</code>. Leave empty for GitHub Copilot. Its key can stay empty too if you signed in with GitHub above; otherwise it is a GitHub token with the "Copilot Requests" permission.</p>
       <label for="p-model">Model</label>
       <input id="p-model" name="model" required autocapitalize="none" spellcheck="false" placeholder="Model or deployment name">
       <label for="p-auth">Key header</label>
@@ -61,6 +61,11 @@
       <div class="status" aria-live="polite"></div>
     </form>
   </details>
+</section>
+
+<section>
+  <h2>GitHub Copilot</h2>
+  <div id="copilot" hx-get="/settings/copilot" hx-trigger="load" aria-live="polite"></div>
 </section>
 
 <section>

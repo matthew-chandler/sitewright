@@ -59,18 +59,21 @@ _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on m
    on your machine or the VPS and send me the output (it prints no secret):
 
    ```sh
-   sitewright copilot install          # downloads ~150 MB, verifies the checksum
-   COPILOT_GITHUB_TOKEN=<token> sitewright copilot check
+   sitewright copilot install    # downloads ~150 MB, verifies the checksum
+   sitewright copilot login      # shows a code to enter at github.com; no token
+   sitewright copilot check      # models, one test call, memory idle and at peak
    ```
 
-   On the VPS add `--data-dir ~/sitewright-data` to both. The token is a fine-grained
-   personal access token with the "Copilot Requests" permission. `check` lists your
-   models, makes one test call and prints the runtime's memory when idle and at peak;
-   that replaces the measurement command I gave you before, which exited before it
-   could print (its input was closed). The VPS has about 550 MB free.
+   On the VPS add `--data-dir ~/sitewright-data` to each. `check` replaces the
+   measurement command I gave you before, which exited before it could print (its
+   input was closed). The VPS has about 550 MB free. The sign-in is the least certain
+   part: I could not find documentation for one step (agreeing to keep the credentials
+   in a file on a machine without a keychain) and guessed it. If `login` fails, a
+   token still works: `COPILOT_GITHUB_TOKEN=<token> sitewright copilot check`.
 
    If the check passes: add the provider in the portal (Settings, kind "GitHub
-   Copilot", a model from the list, the token as the key). If it fails, the output
+   Copilot", a model from the list, no key). The portal also has a "Sign in with
+   GitHub" button under Settings. If it fails, the output
    tells me what to fix. See `docs/providers.md` and ADR-0008.
 
 ## Milestones

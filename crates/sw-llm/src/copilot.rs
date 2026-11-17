@@ -107,7 +107,19 @@ pub trait Connector: Send + Sync {
 
 /// Launches the runtime program as a child process.
 struct ProcessConnector {
-    token: String,
+    /// A GitHub token, or `None` to use the sign-in stored in the runtime's home.
+    token: Option<String>,
+    /// Without a token: fail early, with directions, when nobody is signed in.
+    require_sign_in: bool,
+}
+
+/// The runtime's home directory, where it keeps a stored sign-in.
+fn home_of(program: &Path) -> PathBuf {
+    program
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("home")
 }
 
 #[async_trait]
@@ -117,19 +129,16 @@ impl Connector for ProcessConnector {
         if !program.is_file() {
             return Err(not_installed());
         }
-        let base = program
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let home = base.join("home");
+        let home = home_of(&program);
         let work = home.join("work");
         std::fs::create_dir_all(&work)
             .map_err(|e| LlmError::Config(format!("cannot create {}: {e}", work.display())))?;
 
+        prepare_home(&home)?;
+
         let mut command = tokio::process::Command::new(&program);
         command
             .args(["--server", "--stdio", "--no-auto-update"])
-            .args(["--auth-token-env", TOKEN_ENV, "--no-auto-login"])
             .env_clear()
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -137,12 +146,16 @@ impl Connector for ProcessConnector {
             .env("XDG_STATE_HOME", home.join(".state"))
             .env("PATH", "/usr/bin:/bin")
             .env("COPILOT_TELEMETRY_DISABLED", "true")
-            .env(TOKEN_ENV, &self.token)
             .current_dir(&work)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(token) = &self.token {
+            command
+                .args(["--auth-token-env", TOKEN_ENV, "--no-auto-login"])
+                .env(TOKEN_ENV, token);
+        }
         let mut child = command.spawn().map_err(|e| {
             LlmError::Config(format!(
                 "cannot start the Copilot runtime {}: {e}",
@@ -165,7 +178,10 @@ impl Connector for ProcessConnector {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let line = line.replace(&token, "[token]");
+                let line = match &token {
+                    Some(token) => line.replace(token.as_str(), "[token]"),
+                    None => line,
+                };
                 tracing::debug!(target: "sw_llm::copilot", "runtime: {line}");
                 if let Ok(mut tail) = tail_writer.lock() {
                     if tail.len() == 12 {
@@ -176,7 +192,14 @@ impl Connector for ProcessConnector {
             }
         });
 
-        let connected = connect_streams(stdout, stdin, work).await;
+        let mut connected = connect_streams(stdout, stdin, work).await;
+        if let (Ok(client), true) = (&connected, self.require_sign_in) {
+            match client.get_auth_status().await {
+                Ok(status) if status.is_authenticated => {}
+                Ok(_) => connected = Err(not_signed_in()),
+                Err(e) => connected = Err(sdk_error(e)),
+            }
+        }
         match connected {
             Ok(client) => Ok(Connection {
                 client,
@@ -218,6 +241,29 @@ fn not_installed() -> LlmError {
         "the Copilot runtime is not installed; run `sitewright copilot install` on the server"
             .into(),
     )
+}
+
+/// Make the runtime's home private, and tell the runtime it may keep a sign-in in its
+/// configuration file (a server has no keychain to put it in).
+fn prepare_home(home: &Path) -> Result<(), LlmError> {
+    use std::os::unix::fs::PermissionsExt;
+    let problem = |e: std::io::Error| LlmError::Config(format!("{}: {e}", home.display()));
+    std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o700)).map_err(problem)?;
+    let dir = home.join(".copilot");
+    let file = dir.join("config.json");
+    if !file.exists() {
+        std::fs::create_dir_all(&dir).map_err(problem)?;
+        std::fs::write(&file, "{\n  \"store_token_plaintext\": true\n}\n").map_err(problem)?;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).map_err(problem)?;
+    }
+    Ok(())
+}
+
+fn not_signed_in() -> LlmError {
+    LlmError::Auth {
+        status: 401,
+        message: "nobody is signed in to GitHub Copilot; sign in under Settings, or run `sitewright copilot login`".into(),
+    }
 }
 
 fn sdk_error(e: github_copilot_sdk::Error) -> LlmError {
@@ -360,16 +406,17 @@ impl std::fmt::Debug for Copilot {
 }
 
 impl Copilot {
+    /// With a token (the provider's key), sign in with it. Without one, use the GitHub
+    /// sign-in stored by `sitewright copilot login` or the Settings page.
     pub fn new(config: &ProviderConfig, token: Option<String>) -> Result<Self, LlmError> {
-        let token = token.filter(|t| !t.trim().is_empty()).ok_or_else(|| {
-            LlmError::Config(format!(
-                "provider {:?} needs a GitHub token with the \"Copilot Requests\" permission as its key",
-                config.id
-            ))
-        })?;
+        let token = token.filter(|t| !t.trim().is_empty());
+        let require_sign_in = token.is_none();
         Ok(Self::with_connector(
             config,
-            Box::new(ProcessConnector { token }),
+            Box::new(ProcessConnector {
+                token,
+                require_sign_in,
+            }),
         ))
     }
 
@@ -401,6 +448,25 @@ impl Copilot {
     }
 }
 
+/// Take the single runtime slot and start a runtime.
+async fn start(connector: &dyn Connector) -> Result<Arc<Running>, LlmError> {
+    let permit = tokio::time::timeout(SLOT_WAIT, slot().acquire_owned())
+        .await
+        .map_err(|_| {
+            LlmError::Config(
+                "another Copilot conversation is running; only one runs at a time".into(),
+            )
+        })?
+        .map_err(|_| LlmError::Config("the Copilot slot is closed".into()))?;
+    let connection = connector.connect().await?;
+    Ok(Arc::new(Running {
+        client: connection.client,
+        pid: connection.pid,
+        _guard: connection.guard,
+        _slot: permit,
+    }))
+}
+
 impl Shared {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state
@@ -413,21 +479,7 @@ impl Shared {
         if let Some(running) = self.lock().runtime.upgrade() {
             return Ok(running);
         }
-        let permit = tokio::time::timeout(SLOT_WAIT, slot().acquire_owned())
-            .await
-            .map_err(|_| {
-                LlmError::Config(
-                    "another Copilot conversation is running; only one runs at a time".into(),
-                )
-            })?
-            .map_err(|_| LlmError::Config("the Copilot slot is closed".into()))?;
-        let connection = self.connector.connect().await?;
-        let running = Arc::new(Running {
-            client: connection.client,
-            pid: connection.pid,
-            _guard: connection.guard,
-            _slot: permit,
-        });
+        let running = start(self.connector.as_ref()).await?;
         self.lock().runtime = Arc::downgrade(&running);
         Ok(running)
     }
@@ -757,6 +809,198 @@ fn classify(data: &serde_json::Value, message: String) -> LlmError {
         }
     } else {
         LlmError::Protocol(format!("Copilot: {message}"))
+    }
+}
+
+// ---- Signing in with a GitHub account ----------------------------------------------
+//
+// The runtime is GitHub's own client, so it can run GitHub's device sign-in itself:
+// it gives a short code, the owner enters it at github.com, and the runtime stores the
+// resulting credentials in its home directory. Sitewright never sees them.
+
+/// Where a sign-in stands.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SignIn {
+    /// No sign-in has been started in this process.
+    Idle,
+    /// Waiting for the owner to enter `user_code` at `verification_uri`.
+    Waiting {
+        user_code: String,
+        verification_uri: String,
+    },
+    Done {
+        /// The GitHub user name, when the runtime reported it.
+        login: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+fn sign_in_cell() -> &'static Mutex<SignIn> {
+    static STATE: OnceLock<Mutex<SignIn>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(SignIn::Idle))
+}
+
+fn set_sign_in(state: SignIn) {
+    *sign_in_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
+}
+
+/// The latest sign-in state.
+pub fn sign_in_state() -> SignIn {
+    sign_in_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Start a device sign-in and return the code to show. The rest happens in the
+/// background; follow it with [`sign_in_state`]. If one is already waiting, its code is
+/// returned again.
+pub async fn sign_in_start() -> Result<SignIn, LlmError> {
+    let current = sign_in_state();
+    if matches!(current, SignIn::Waiting { .. }) {
+        return Ok(current);
+    }
+    let connector = ProcessConnector {
+        token: None,
+        require_sign_in: false,
+    };
+    sign_in_with(&connector).await
+}
+
+/// [`sign_in_start`] over any connector. Tests use this.
+pub async fn sign_in_with(connector: &dyn Connector) -> Result<SignIn, LlmError> {
+    use github_copilot_sdk::rpc::{
+        AuthLoginAdvanceRequest, AuthLoginBeginOptions, AuthLoginMethod, AuthLoginResultStatus,
+        AuthLoginStep, LoginProviderKind,
+    };
+    let runtime = start(connector).await?;
+    // The sign-in calls belong to a session. This one can do nothing else.
+    let session = runtime
+        .client
+        .create_session(
+            SessionConfig::default()
+                .with_available_tools([NO_TOOLS])
+                .with_enable_skills(false)
+                .with_enable_session_telemetry(false)
+                .with_permission_handler(Arc::new(OnlyOurTools)),
+        )
+        .await
+        .map_err(sdk_error)?;
+    let begun = session
+        .rpc()
+        .accounts()
+        .login()
+        .begin_with_options(
+            AuthLoginBeginOptions::new(LoginProviderKind::GitHubDotCom)
+                .method(AuthLoginMethod::DeviceCode),
+        )
+        .await
+        .map_err(sdk_error)?;
+    let (waiting, lifetime) = match begun.step {
+        AuthLoginStep::DeviceCode(code) => (
+            SignIn::Waiting {
+                user_code: code.user_code,
+                verification_uri: code.verification_uri,
+            },
+            Duration::from_secs(code.expires_in.clamp(60, 1800) as u64),
+        ),
+        AuthLoginStep::Error(e) => return Err(LlmError::Protocol(e.message)),
+        _ => {
+            return Err(LlmError::Protocol(
+                "the Copilot runtime did not offer a device code".into(),
+            ));
+        }
+    };
+    set_sign_in(waiting.clone());
+
+    let flow_id = begun.flow_id;
+    tokio::spawn(async move {
+        // Holds the runtime (and the single slot) until the owner finishes or the code
+        // expires.
+        let _runtime = runtime;
+        let advance = async {
+            let mut consented = false;
+            let mut input: Option<String> = None;
+            loop {
+                let step = session
+                    .rpc()
+                    .accounts()
+                    .login()
+                    .advance(AuthLoginAdvanceRequest {
+                        flow_id: flow_id.clone(),
+                        input: input.take(),
+                    })
+                    .await;
+                match step {
+                    Ok(AuthLoginStep::Completed(done)) => match done.result.status {
+                        AuthLoginResultStatus::Completed => {
+                            return SignIn::Done {
+                                login: done.result.login,
+                            };
+                        }
+                        // A server has no keychain, so the runtime asks before keeping
+                        // the credentials in a file. That file is in the owner-only
+                        // data directory, like Sitewright's other keys: agree, once.
+                        AuthLoginResultStatus::NeedsPlaintextConsent if !consented => {
+                            consented = true;
+                            input = Some("yes".to_owned());
+                        }
+                        other => {
+                            return SignIn::Failed {
+                                message: format!(
+                                    "GitHub accepted the code, but the runtime could not finish signing in ({other:?})"
+                                ),
+                            };
+                        }
+                    },
+                    Ok(AuthLoginStep::Error(e)) => return SignIn::Failed { message: e.message },
+                    Ok(_) => tokio::time::sleep(Duration::from_secs(2)).await,
+                    Err(e) => {
+                        return SignIn::Failed {
+                            message: sdk_error(e).to_string(),
+                        };
+                    }
+                }
+            }
+        };
+        let outcome = tokio::time::timeout(lifetime, advance)
+            .await
+            .unwrap_or(SignIn::Failed {
+                message: "the code expired before it was entered; start again".into(),
+            });
+        set_sign_in(outcome);
+    });
+    Ok(waiting)
+}
+
+/// Who is signed in, by starting the runtime briefly and asking. `Ok(None)` means
+/// nobody is.
+pub async fn account() -> Result<Option<String>, LlmError> {
+    let connector = ProcessConnector {
+        token: None,
+        require_sign_in: false,
+    };
+    let runtime = start(&connector).await?;
+    let status = runtime.client.get_auth_status().await.map_err(sdk_error)?;
+    Ok(status
+        .is_authenticated
+        .then(|| status.login.unwrap_or_else(|| "a GitHub account".into())))
+}
+
+/// Forget the stored sign-in by removing the runtime's home directory.
+pub fn sign_out() -> std::io::Result<()> {
+    set_sign_in(SignIn::Idle);
+    let Some(program) = runtime_path() else {
+        return Ok(());
+    };
+    match std::fs::remove_dir_all(home_of(&program)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
     }
 }
 

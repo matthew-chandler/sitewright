@@ -107,8 +107,13 @@ pub enum CopilotCommand {
         #[arg(long, value_name = "FILE")]
         from: Option<PathBuf>,
     },
-    /// Start the runtime, sign in with the token in COPILOT_GITHUB_TOKEN, list the
-    /// models, make one test call and report the runtime's memory use.
+    /// Sign in with your GitHub account: shows a code to enter at github.com. No token
+    /// to create; the runtime keeps the credentials in the data directory.
+    Login,
+    /// Forget the stored GitHub sign-in.
+    Logout,
+    /// Start the runtime, list the models, make one test call and report the runtime's
+    /// memory use. Uses the stored sign-in, or a token in COPILOT_GITHUB_TOKEN.
     Check {
         /// Model to test. Default: the first one the account lists.
         #[arg(long)]
@@ -275,6 +280,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Copilot(CopilotCommand::Install { from }) => {
             crate::copilot::install(loaded.data_dir.root(), from.as_deref()).await
         }
+        Command::Copilot(CopilotCommand::Login) => {
+            crate::copilot::login(loaded.data_dir.root()).await
+        }
+        Command::Copilot(CopilotCommand::Logout) => crate::copilot::logout(loaded.data_dir.root()),
         Command::Copilot(CopilotCommand::Check { model }) => {
             crate::copilot::check(loaded.data_dir.root(), model).await
         }
