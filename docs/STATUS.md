@@ -53,37 +53,25 @@ _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on m
    done): the run page clock and "Back to site", Markdown in agent messages, Ctrl+Enter
    with a keyboard, and "Name and address" on a site's page.
 
-7. **GitHub Copilot (roadmap 1.3) needs two things from you before I can build it.**
-   What I found (2026-11-16):
-   - GitHub Models, the simple hosted API, was retired on 2026-07-30, so that is out.
-   - Calling Copilot's chat API directly is officially supported only for specific
-     partner tools (OpenCode since January 2026). Other tools do it with VS Code's
-     client ID; I will not ship that in a public repository tied to your account.
-   - The supported way is GitHub's **Copilot SDK** (there is a Rust crate,
-     `github-copilot-sdk`). It drives GitHub's Copilot runtime as a helper process and
-     accepts a fine-grained personal access token or an OAuth app token. Sitewright's
-     tools can be registered as custom tools with the built-in ones switched off. The
-     runtime is a 209 MB download (150 MB compressed), and Copilot runs the agent loop,
-     so this is a second engine beside the current one, not a new provider entry.
-   - Unknown: how much memory the runtime uses. The VPS has about 550 MB free. I
-     downloaded the runtime but was not permitted to execute it.
+7. **GitHub Copilot (roadmap 1.3) is built but has never met the real runtime.** You
+   chose the SDK route on 2026-11-16. I am not permitted to execute GitHub's runtime
+   or read `.env`, so I tested against a scripted stand-in only. Please run this once
+   on your machine or the VPS and send me the output (it prints no secret):
 
-   What I need:
-   - A decision: build the SDK route (my recommendation if the memory fits), or drop
-     Copilot.
-   - To measure memory, run this in WSL and send me the two numbers it prints (it
-     starts the runtime with an empty home directory, waits, and stops it):
+   ```sh
+   sitewright copilot install          # downloads ~150 MB, verifies the checksum
+   COPILOT_GITHUB_TOKEN=<token> sitewright copilot check
+   ```
 
-     ```sh
-     cd /tmp/claude-1000/-home-matthew-projects-sitewright/1b882e3a-1b73-4cca-9cf6-d3391cee77b0/scratchpad/copilot-cli
-     HOME=$PWD/home ./x/package/copilot --headless --stdio < /dev/null > /dev/null 2>&1 &
-     sleep 8; ps -o rss=,vsz= -p $!; kill $!
-     ```
+   On the VPS add `--data-dir ~/sitewright-data` to both. The token is a fine-grained
+   personal access token with the "Copilot Requests" permission. `check` lists your
+   models, makes one test call and prints the runtime's memory when idle and at peak;
+   that replaces the measurement command I gave you before, which exited before it
+   could print (its input was closed). The VPS has about 550 MB free.
 
-     If that folder is gone (it is temporary), `npm pack @github/copilot-linux-x64`
-     and unpack it first.
-   - For testing against the real service: a fine-grained personal access token with
-     the "Copilot Requests" permission, as `COPILOT_GITHUB_TOKEN` in `.env`.
+   If the check passes: add the provider in the portal (Settings, kind "GitHub
+   Copilot", a model from the list, the token as the key). If it fails, the output
+   tells me what to fix. See `docs/providers.md` and ADR-0008.
 
 ## Milestones
 
@@ -189,9 +177,10 @@ _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on m
 - Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
   - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
     Not tagged. Not yet checked on a phone (Needs #6).
-  - **1.3** (GitHub Copilot): blocked on Needs #7. The "named models" half needs no
-    work: a provider entry already is a named model with a picker in the prompt box.
-    The `list_models` tool for the agent moves to 1.6, where it is first used.
+  - **1.3** (GitHub Copilot): built as version 1.8.0, provider kind `copilot`, marked
+    experimental. Tested against a scripted stand-in for GitHub's runtime, never the
+    real one (Needs #7). "Named models" needed no work: a provider entry already is a
+    named model with a picker in the prompt box.
   - **1.4** (backends: runtime and site database): merged as version 1.4.0. A site can
     have JavaScript under `backend/` answering `/api/`, with its own SQLite database;
     the agent has the `build-backend` skill and the `test_backend`, `backend_logs` and

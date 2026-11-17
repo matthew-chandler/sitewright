@@ -61,6 +61,7 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
     } = loaded;
     data.ensure()
         .with_context(|| format!("cannot create data directory {}", data.root().display()))?;
+    sw_llm::copilot::set_default_runtime(crate::copilot::runtime_program(data.root()));
     match &source {
         Some(path) => {
             tracing::info!(config = %path.display(), data_dir = %data.root().display(), "starting")

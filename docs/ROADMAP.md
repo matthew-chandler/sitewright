@@ -226,3 +226,6 @@ clean-up of the `.dev` hostnames, and publishing 1.1.0. Details are in
 - **Containerized sites** (requested 2026-11-16, released as 1.7.0): see
   `docs/containers.md` and ADR-0007. The version number 1.7 was used for this; "other
   backend frameworks" above remains optional and unbuilt, and would be a later release.
+
+**Copilot (1.3), decided 2026-11-16:** Matthew chose the Copilot SDK route,
+tentatively. Built as provider kind `copilot` in version 1.8.0; see ADR-0008.

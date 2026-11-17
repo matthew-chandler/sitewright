@@ -58,6 +58,9 @@ pub enum Command {
     /// Administer the daemon.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// GitHub Copilot as a model provider: install its runtime and check it.
+    #[command(subcommand)]
+    Copilot(CopilotCommand),
     /// Download a site's live release as an archive.
     Export {
         site: String,
@@ -92,6 +95,24 @@ pub enum Command {
         site: String,
         /// What you want, in plain language.
         prompt: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CopilotCommand {
+    /// Download GitHub's Copilot runtime (about 150 MB) into the data directory, after
+    /// verifying its checksum.
+    Install {
+        /// Use an archive you downloaded yourself instead of fetching it.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
+    },
+    /// Start the runtime, sign in with the token in COPILOT_GITHUB_TOKEN, list the
+    /// models, make one test call and report the runtime's memory use.
+    Check {
+        /// Model to test. Default: the first one the account lists.
+        #[arg(long)]
+        model: Option<String>,
     },
 }
 
@@ -251,6 +272,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Init(args) => crate::setup::init(&loaded, args),
         Command::Doctor => crate::setup::doctor(&loaded).await,
         Command::Site(command) => site(&loaded, command).await,
+        Command::Copilot(CopilotCommand::Install { from }) => {
+            crate::copilot::install(loaded.data_dir.root(), from.as_deref()).await
+        }
+        Command::Copilot(CopilotCommand::Check { model }) => {
+            crate::copilot::check(loaded.data_dir.root(), model).await
+        }
         Command::Backend(command) => backend(&loaded, command).await,
         Command::Admin(AdminCommand::Invite) => {
             let client = AdminClient::new(&loaded.data_dir)?;

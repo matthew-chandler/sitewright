@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod client;
+pub mod copilot;
 pub mod daemon;
 pub mod prompt;
 pub mod runsite;

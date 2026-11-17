@@ -1268,6 +1268,7 @@ async fn provider_save(State(state): State<AppState>, Form(form): Form<ProviderF
         "openai_compat" => ProviderKind::OpenaiCompat,
         "anthropic" => ProviderKind::Anthropic,
         "gemini" => ProviderKind::Gemini,
+        "copilot" => ProviderKind::Copilot,
         _ => return error_fragment("choose a provider kind"),
     };
     let provider = ProviderConfig {

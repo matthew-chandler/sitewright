@@ -43,10 +43,11 @@
         <option value="openai_compat">OpenAI-compatible (OpenAI, Azure, OpenRouter, Groq, Ollama)</option>
         <option value="anthropic">Anthropic</option>
         <option value="gemini">Gemini</option>
+        <option value="copilot">GitHub Copilot (needs its runtime: sitewright copilot install)</option>
       </select>
       <label for="p-base">Base URL</label>
       <input id="p-base" name="base_url" type="url" inputmode="url" autocapitalize="none" spellcheck="false" placeholder="https://api.openai.com/v1">
-      <p class="hint">Required for OpenAI-compatible providers. Azure: <code>https://RESOURCE.openai.azure.com/openai/v1/</code></p>
+      <p class="hint">Required for OpenAI-compatible providers. Azure: <code>https://RESOURCE.openai.azure.com/openai/v1/</code>. Leave empty for GitHub Copilot; its key is a GitHub token with the "Copilot Requests" permission.</p>
       <label for="p-model">Model</label>
       <input id="p-model" name="model" required autocapitalize="none" spellcheck="false" placeholder="Model or deployment name">
       <label for="p-auth">Key header</label>
