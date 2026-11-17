@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-16
+
+### Fixed
+
+- Copilot sign-in on a server: GitHub accepted the code, but the runtime would not
+  save the sign-in without a system keychain. Sitewright now gives the runtime the
+  setting that allows it (`storeTokenPlaintext`).
+
 ## [1.8.0] - 2026-11-16
 
 ### Added
