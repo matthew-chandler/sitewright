@@ -21,8 +21,8 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
   there needs `--data-dir ~/sitewright-data`. The daemon's own log is
   `journalctl --user -u sitewright`.
 - Open threads, most useful first:
-  1. **Copilot has never completed a model call against the real runtime.** Sign-in
-     reached GitHub and was fixed in 1.8.1 (unconfirmed since). Needs #7 below.
+  1. Copilot: Matthew reports it working on the VPS (2026-11-17). I did not see the
+     output myself, so its memory use there is not recorded anywhere.
   2. A CLI command panics with "Broken pipe" when its output is piped to `head`.
   3. The ACME certificate test is flaky under load (it has two retries).
 - Things that surprised me and will surprise you:
@@ -35,78 +35,31 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 ## Needs from Matthew
 
-Note (2026-11-16): items 1 and 2 look done. Sites answer at `https://*.machandler.com`
-and Matthew has used the portal. I did not verify the nginx configuration myself, so
-the items are left below until he confirms.
-
-1. **Add the nginx block for `*.machandler.com` (needs sudo).** Everything else for the
-   move to `*.machandler.com` and `sitewright.machandler.com` is done; this is the last
-   step. Your existing sites keep their own server blocks (exact names win over the
-   wildcard) and no existing file is changed.
+1. **Remove the old dev nginx site (needs sudo).** The last piece of the clean-up
+   after the move to `*.machandler.com`. The old hostnames are already detached from
+   the sites and the DNS records are deleted, so nothing uses this file any more:
 
    ```sh
-   # from WSL
-   scp ~/projects/sitewright/scripts/vps-production.sh <your sudo user>@<vps>:/tmp/
-   # on the VPS: look at the dry run, then run it
-   sudo /tmp/vps-production.sh --like /etc/nginx/sites-enabled/fireworks.machandler.com --dry-run
-   sudo /tmp/vps-production.sh --like /etc/nginx/sites-enabled/fireworks.machandler.com
+   sudo rm /etc/nginx/sites-enabled/sitewright-dev
+   sudo nginx -t && sudo systemctl reload nginx
    ```
 
-   It asks certbot for a certificate for `sitewright.machandler.com` and writes one file,
-   `/etc/nginx/sites-available/sitewright`. Two things change for visitors:
-   `www.machandler.com` and any other subdomain without its own block now get Sitewright's
-   "no site at this address" page instead of nginx's default site (today that is the `api`
-   block).
+   `/etc/nginx/sites-available/sitewright-dev` can go too, or stay as a record. Any
+   certificate certbot holds for the dev names will fail to renew now that the DNS
+   records are gone; `sudo certbot certificates` lists them and
+   `sudo certbot delete --cert-name <name>` removes one.
 
-2. **Enroll a new passkey** for the new admin address (passkeys are bound to the
-   hostname, so the one made for `sitewright-dev` no longer applies). On the VPS as
-   devtest:
-
-   ```sh
-   ~/bin/sitewright --data-dir ~/sitewright-data admin invite
-   ```
-
-   Open the printed `https://sitewright.machandler.com/enroll/...` link on your phone,
-   then remove the old passkey under Settings, and re-add the app to the home screen.
-
-3. **Optional clean-up, once you are happy:** remove the old dev names
-   (`sitewright site hostname remove hikes hikes.dev.machandler.com`, same for `smoke`),
-   delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
-   `*.dev` and `sitewright-dev` DNS records.
-
-4. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
+2. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
    tag. `git tag -a v1.9.1 -m "Sitewright 1.9.1" && git push origin v1.9.1` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
-5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
+3. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
    screenshots, `.claude/settings.json`.
 
-6. **Check release 1.2 on your phone** (it is running on the VPS, reachable once #1 is
-   done): the run page clock and "Back to site", Markdown in agent messages, Ctrl+Enter
-   with a keyboard, and "Name and address" on a site's page.
-
-7. **GitHub Copilot (roadmap 1.3) is built but has never met the real runtime.** You
-   chose the SDK route on 2026-11-16. I am not permitted to execute GitHub's runtime
-   or read `.env`, so I tested against a scripted stand-in only. Please run this once
-   on your machine or the VPS and send me the output (it prints no secret):
-
-   ```sh
-   sitewright copilot install    # downloads ~150 MB, verifies the checksum
-   sitewright copilot login      # shows a code to enter at github.com; no token
-   sitewright copilot check      # models, one test call, memory idle and at peak
-   ```
-
-   On the VPS add `--data-dir ~/sitewright-data` to each. `check` replaces the
-   measurement command I gave you before, which exited before it could print (its
-   input was closed). The VPS has about 550 MB free. The sign-in is the least certain
-   part: I could not find documentation for one step (agreeing to keep the credentials
-   in a file on a machine without a keychain) and guessed it. If `login` fails, a
-   token still works: `COPILOT_GITHUB_TOKEN=<token> sitewright copilot check`.
-
-   If the check passes: add the provider in the portal (Settings, kind "GitHub
-   Copilot", a model from the list, no key). The portal also has a "Sign in with
-   GitHub" button under Settings. If it fails, the output
-   tells me what to fix. See `docs/providers.md` and ADR-0008.
+Done, confirmed by Matthew on 2026-11-17: the nginx block for `*.machandler.com`, the
+new passkey, the phone check of release 1.2, and GitHub Copilot (installed, signed in
+and checked on the VPS). The old `*.dev.machandler.com` names were removed from
+`hikes` and `smoke` the same day.
 
 ## Milestones
 
@@ -118,7 +71,7 @@ the items are left below until he confirms.
 | M3 Web UI and passkeys | done; phone checklist passed 2026-11-15 |
 | M4 Skills and more providers | done (Anthropic and Gemini verified by fixtures only; no keys provided) |
 | M5 Metrics and dashboards | done |
-| M6 Standalone TLS, updates, export, v1.0.0 | built; releases wait on the signing secrets (Needs #1, #2) |
+| M6 Standalone TLS, updates, export, v1.0.0 | built; releases wait on the signing secrets (done) |
 
 ## Done
 
@@ -208,7 +161,7 @@ the items are left below until he confirms.
 
 ## In progress
 
-- Waiting on Needs #1 to finish the move to `*.machandler.com`.
+- The move to `*.machandler.com` is finished except for removing the old nginx file (Needs #1).
 - Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
   - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
     Not tagged. Not yet checked on a phone (Needs #6).
@@ -333,7 +286,7 @@ delete, agent-requested delete, provider test.
 
 ## What to test by hand
 
-- The phone checklist in [testing.md](testing.md) (after Needs #1).
+- The phone checklist in [testing.md](testing.md) .
 - Until then, the UI can be tried on a desktop over an SSH tunnel:
   `ssh -L 18080:127.0.0.1:18080 racknerd-dev` shows the pages, but passkeys will not work
   there because the origin differs from the configured admin URL. Locally:
@@ -342,7 +295,7 @@ delete, agent-requested delete, provider test.
   `http://localhost:8080/enroll/...` link (browsers allow passkeys on localhost).
 - `http://hikes.dev.machandler.com`: the agent-built site.
 - `./scripts/smoke-dev.sh` from WSL.
-- Backends, from the portal once Needs #1 and #2 are done. Each is one prompt:
+- Backends, from the portal now that it is reachable. Each is one prompt:
   1. "A guestbook where visitors leave their name and a message." Then post an entry on
      the site and look at **Backend** on the site's page (database size, console).
   2. On a site's page, under **Backend access**, tick "Allow this site's backend to use
