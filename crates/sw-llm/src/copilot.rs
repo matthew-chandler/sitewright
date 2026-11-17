@@ -1003,9 +1003,68 @@ pub async fn account() -> Result<Option<String>, LlmError> {
         .then(|| status.login.unwrap_or_else(|| "a GitHub account".into())))
 }
 
+/// A model the signed-in account may use.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ModelChoice {
+    /// What goes in a provider's `model` field.
+    pub id: String,
+    /// The name GitHub shows for it.
+    pub name: String,
+}
+
+fn models_cell() -> &'static Mutex<Option<Vec<ModelChoice>>> {
+    static MODELS: OnceLock<Mutex<Option<Vec<ModelChoice>>>> = OnceLock::new();
+    MODELS.get_or_init(|| Mutex::new(None))
+}
+
+/// The models of the stored sign-in. The first call (and every call with `refresh`)
+/// starts the runtime to ask; the answer is then remembered until the daemon restarts
+/// or the owner signs out.
+pub async fn available_models(refresh: bool) -> Result<Vec<ModelChoice>, LlmError> {
+    let connector = ProcessConnector {
+        token: None,
+        require_sign_in: true,
+    };
+    available_models_with(&connector, refresh).await
+}
+
+/// [`available_models`] over any connector. Tests use this.
+pub async fn available_models_with(
+    connector: &dyn Connector,
+    refresh: bool,
+) -> Result<Vec<ModelChoice>, LlmError> {
+    let remembered = models_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if let (Some(models), false) = (remembered, refresh) {
+        return Ok(models);
+    }
+    let runtime = start(connector).await?;
+    let mut models: Vec<ModelChoice> = runtime
+        .client
+        .list_models()
+        .await
+        .map_err(sdk_error)?
+        .into_iter()
+        .map(|m| ModelChoice {
+            id: m.id,
+            name: m.name,
+        })
+        .collect();
+    models.sort_by_key(|m| m.name.to_lowercase());
+    *models_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(models.clone());
+    Ok(models)
+}
+
 /// Forget the stored sign-in by removing the runtime's home directory.
 pub fn sign_out() -> std::io::Result<()> {
     set_sign_in(SignIn::Idle);
+    *models_cell()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     let Some(program) = runtime_path() else {
         return Ok(());
     };

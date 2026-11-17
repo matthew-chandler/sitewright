@@ -42,6 +42,57 @@
     });
   }
 
+  // Searchable dropdowns: a search box with data-filter-select="<select id>" narrows
+  // that select to the options containing every word typed. The full list is kept
+  // aside and the options are rebuilt, because hiding options does not work on iOS.
+  var allOptions = {};
+  function optionsOf(select) {
+    if (!allOptions[select.id] || allOptions[select.id].owner !== select) {
+      allOptions[select.id] = {
+        owner: select,
+        items: Array.prototype.map.call(select.options, function (o) { return { value: o.value, text: o.textContent }; })
+      };
+    }
+    return allOptions[select.id].items;
+  }
+  function suggestId(select) {
+    var field = document.querySelector('[data-id-from="' + select.id + '"]');
+    if (!field || field.dataset.edited || !select.value) return;
+    field.value = ("copilot-" + select.value).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  }
+  document.body.addEventListener("input", function (event) {
+    var box = event.target;
+    if (box && box.dataset && box.dataset.idFrom) { box.dataset.edited = box.value ? "1" : ""; return; }
+    if (!box || !box.dataset || !box.dataset.filterSelect) return;
+    var select = document.getElementById(box.dataset.filterSelect);
+    if (!select) return;
+    var items = optionsOf(select);
+    var words = box.value.toLowerCase().split(/\s+/).filter(Boolean);
+    var matches = items.filter(function (item) {
+      var hay = (item.text + " " + item.value).toLowerCase();
+      return words.every(function (w) { return hay.indexOf(w) !== -1; });
+    });
+    var previous = select.value;
+    select.textContent = "";
+    matches.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.text;
+      select.appendChild(option);
+    });
+    if (matches.some(function (m) { return m.value === previous; })) select.value = previous;
+    var count = document.querySelector('[data-filter-count="' + select.id + '"]');
+    if (count) count.textContent = words.length ? matches.length + " of " + items.length + " match" : "";
+    suggestId(select);
+  });
+  document.body.addEventListener("change", function (event) {
+    if (event.target && event.target.tagName === "SELECT") suggestId(event.target);
+  });
+  document.body.addEventListener("htmx:afterSwap", function () {
+    var select = document.getElementById("cm-model");
+    if (select) suggestId(select);
+  });
+
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(function () { /* the app works without it */ });
   }
