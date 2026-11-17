@@ -243,17 +243,28 @@ fn not_installed() -> LlmError {
     )
 }
 
-/// Make the runtime's home private, and tell the runtime it may keep a sign-in in its
-/// configuration file (a server has no keychain to put it in).
+/// The runtime's user settings file, inside its home.
+const SETTINGS_FILE: &str = ".copilot/settings.json";
+/// Lets the runtime keep a sign-in in its own files when there is no system keychain,
+/// which a server never has. Without it the runtime completes the sign-in with GitHub
+/// and then refuses to save it. Setting name from GitHub's Copilot CLI configuration
+/// reference.
+const SETTINGS: &str = "{\n  \"storeTokenPlaintext\": true\n}\n";
+
+/// Make the runtime's home private and give it its settings, unless it already has
+/// some.
 fn prepare_home(home: &Path) -> Result<(), LlmError> {
     use std::os::unix::fs::PermissionsExt;
     let problem = |e: std::io::Error| LlmError::Config(format!("{}: {e}", home.display()));
     std::fs::set_permissions(home, std::fs::Permissions::from_mode(0o700)).map_err(problem)?;
-    let dir = home.join(".copilot");
-    let file = dir.join("config.json");
+    let file = home.join(SETTINGS_FILE);
     if !file.exists() {
-        std::fs::create_dir_all(&dir).map_err(problem)?;
-        std::fs::write(&file, "{\n  \"store_token_plaintext\": true\n}\n").map_err(problem)?;
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).map_err(problem)?;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(problem)?;
+        }
+        std::fs::write(&file, SETTINGS).map_err(problem)?;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).map_err(problem)?;
     }
     Ok(())
@@ -1042,6 +1053,30 @@ mod tests {
         assert!(prompt.contains("[user]\nMake a page"));
         assert!(prompt.contains("(called write_file with {\"path\":\"index.html\"})"));
         assert!(prompt.contains("[result of write_file]\nwrote 10 bytes"));
+    }
+
+    #[test]
+    fn the_runtime_home_is_private_and_allows_a_stored_sign_in() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sw-copilot-home-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).expect("create");
+        prepare_home(&dir).expect("prepare");
+        let settings: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join(SETTINGS_FILE)).expect("settings"),
+        )
+        .expect("json");
+        assert_eq!(settings["storeTokenPlaintext"], true);
+        let mode = |p: &Path| std::fs::metadata(p).expect("meta").permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join(SETTINGS_FILE)), 0o600);
+        // Settings the owner changed are left alone.
+        std::fs::write(dir.join(SETTINGS_FILE), "{}").expect("write");
+        prepare_home(&dir).expect("prepare again");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SETTINGS_FILE)).expect("read"),
+            "{}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

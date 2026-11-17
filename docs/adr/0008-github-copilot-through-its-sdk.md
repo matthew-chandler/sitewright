@@ -99,9 +99,6 @@ taken from the SDK's source and tests, not observed:
 - that `--server --stdio --auth-token-env` starts it as the SDK's own launcher does;
 - that the tool allowlist and `replace` system prompt behave as documented;
 - its memory use;
-- the sign-in: that a session can be opened before anyone is signed in, the wire form
-  of agreeing to file storage (`store_token_plaintext` in the runtime's config, and
-  the answer `yes`), and where the credentials end up;
 - any real model call.
 
 `sitewright copilot check` exercises all four and prints the memory numbers. Until it
@@ -113,3 +110,13 @@ has passed on the VPS, treat this as untested.
   limits and events, and the runtime's loop would decide when a run ends.
 - **Calling Copilot's chat API directly.** Not supported for this project.
 - **The SDK's own launcher.** Needs OpenSSL.
+
+## First contact with the real runtime (2026-11-16)
+
+Matthew ran `copilot login` and the portal sign-in on the VPS. Observed in the
+runtime's own log: it starts with our flags, completes the handshake, opens a session
+with nobody signed in, issues a device code, and GitHub accepts it. It then refused to
+save the sign-in because the server has no keychain. The setting that allows file
+storage is `storeTokenPlaintext` in `~/.copilot/settings.json` (GitHub's CLI
+configuration reference), not the name and file first guessed. Fixed in 1.8.1. Model
+calls, the tool allowlist and memory use remain unobserved.
