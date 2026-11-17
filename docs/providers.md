@@ -178,8 +178,9 @@ the runtime can do (shell, files, web). ADR-0008 has the details and the caveats
    sitewright copilot check
    ```
 
-4. Add the provider: in the portal under Settings, kind "GitHub Copilot", a model id
-   from the list, and no key. Or in `config.toml`:
+4. Add the provider. In the portal: Settings, "GitHub Copilot", "Show my models",
+   search or pick a model, name it, "Add this model". Or fill in the provider form
+   yourself: kind "GitHub Copilot", a model id, and no key. Or in `config.toml`:
 
    ```toml
    [[llm.providers]]

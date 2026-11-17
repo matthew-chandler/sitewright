@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-16
+
+### Added
+
+- Settings, GitHub Copilot: "Show my models" lists the models your account can use
+  in a dropdown with a search box, and adds the chosen one as a provider in one step.
+
 ## [1.8.1] - 2026-11-16
 
 ### Fixed

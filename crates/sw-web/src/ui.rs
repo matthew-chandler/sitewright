@@ -57,6 +57,7 @@ pub fn routes() -> Router<AppState> {
         .route("/settings/copilot/login", post(copilot_login))
         .route("/settings/copilot/account", post(copilot_account))
         .route("/settings/copilot/logout", post(copilot_logout))
+        .route("/settings/copilot/models", post(copilot_models))
         .route("/settings/dns-check", post(dns_check))
         .route("/settings/passkeys/{id}/delete", post(passkey_delete))
         .route("/settings/tokens", post(token_create))
@@ -1352,6 +1353,10 @@ fn copilot_fragment(note: Option<String>) -> Response {
     };
     let sign_in = button("Sign in with GitHub", "/settings/copilot/login", "");
     let who = button("Who is signed in?", "/settings/copilot/account", "");
+    let models = "<button type=\"button\" hx-post=\"/settings/copilot/models\" \
+                  hx-target=\"#copilot-models\" hx-disabled-elt=\"this\" \
+                  hx-indicator=\"this\">Show my models</button>";
+    let models_slot = "<div id=\"copilot-models\" aria-live=\"polite\"></div>";
     let sign_out = button("Sign out", "/settings/copilot/logout", "danger");
     let note = note
         .map(|n| format!("<p class=\"msg\" role=\"status\">{}</p>", esc(&n)))
@@ -1379,7 +1384,7 @@ fn copilot_fragment(note: Option<String>) -> Response {
         SignIn::Done { login } => format!(
             "<p class=\"msg ok\" role=\"status\">Signed in{}.</p>\
              <p class=\"muted\">Now add a provider below with the kind \"GitHub Copilot\" and no key.</p>\
-             <div class=\"row\">{who}{sign_out}</div>",
+             <div class=\"row\">{models}{who}{sign_out}</div>{models_slot}",
             login
                 .map(|l| format!(" as {}", esc(&l)))
                 .unwrap_or_default()
@@ -1391,7 +1396,7 @@ fn copilot_fragment(note: Option<String>) -> Response {
         SignIn::Idle => format!(
             "<p class=\"muted\">Use the models of your GitHub Copilot subscription. You get a short \
              code to enter at github.com; there is no token to create.</p>\
-             <div class=\"row\">{sign_in}{who}{sign_out}</div>"
+             <div class=\"row\">{sign_in}{models}{who}{sign_out}</div>{models_slot}"
         ),
     };
     Html(format!("{note}{body}")).into_response()
@@ -1415,6 +1420,56 @@ async fn copilot_account() -> Response {
         Err(e) => format!("Could not ask the runtime: {e}"),
     };
     copilot_fragment(Some(note))
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelsForm {
+    refresh: Option<String>,
+}
+
+/// The account's models as a searchable dropdown, with a form that adds the chosen one
+/// as a provider.
+async fn copilot_models(Form(form): Form<CopilotModelsForm>) -> Response {
+    let models = match sw_llm::copilot::available_models(form.refresh.is_some()).await {
+        Ok(models) => models,
+        Err(e) => return error_fragment(format!("Could not list the models: {e}")),
+    };
+    if models.is_empty() {
+        return error_fragment("This account has no Copilot models.");
+    }
+    // The script in app.js filters the dropdown from this list as you type.
+    let options: String = models
+        .iter()
+        .map(|m| {
+            format!(
+                "<option value=\"{}\">{} ({})</option>",
+                esc(&m.id),
+                esc(&m.name),
+                esc(&m.id)
+            )
+        })
+        .collect();
+    Html(format!(
+        "<form class=\"model-picker\" hx-post=\"/settings/providers\" hx-target=\"find .status\" \
+         hx-disabled-elt=\"find button[type=submit]\">\
+         <input type=\"hidden\" name=\"kind\" value=\"copilot\">\
+         <label for=\"cm-search\">Search {count} models</label>\
+         <input id=\"cm-search\" type=\"search\" data-filter-select=\"cm-model\" autocomplete=\"off\" \
+         autocapitalize=\"none\" spellcheck=\"false\" placeholder=\"Type part of a name, for example gpt\">\
+         <label for=\"cm-model\">Model</label>\
+         <select id=\"cm-model\" name=\"model\" required>{options}</select>\
+         <p class=\"hint\" data-filter-count=\"cm-model\"></p>\
+         <label for=\"cm-id\">Name it</label>\
+         <input id=\"cm-id\" name=\"id\" required maxlength=\"40\" pattern=\"[a-z0-9_-]+\" autocapitalize=\"none\" \
+         spellcheck=\"false\" data-id-from=\"cm-model\" placeholder=\"copilot-gpt\">\
+         <p class=\"hint\">The name you pick models by when building a site. Lowercase letters, digits, - and _.</p>\
+         <div class=\"row\"><button type=\"submit\">Add this model</button>\
+         <button type=\"button\" hx-post=\"/settings/copilot/models\" hx-vals='{{\"refresh\":\"1\"}}' \
+         hx-target=\"#copilot-models\" hx-disabled-elt=\"this\">Refresh list</button></div>\
+         <div class=\"status\" aria-live=\"polite\"></div></form>",
+        count = models.len()
+    ))
+    .into_response()
 }
 
 async fn copilot_logout() -> Response {

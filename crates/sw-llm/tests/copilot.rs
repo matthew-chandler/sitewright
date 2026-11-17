@@ -116,6 +116,10 @@ async fn serve(
                 json!({"sessionId": session, "workspacePath": "/tmp/none"})
             }
             "session.send" => json!({"messageId": "m1"}),
+            "models.list" => json!({"models": [
+                {"id": "gpt-zeta", "name": "Zeta", "capabilities": {}},
+                {"id": "claude-alpha", "name": "alpha (preview)", "capabilities": {}},
+            ]}),
             "session.accounts.login.begin" => json!({
                 "flowId": "flow-1",
                 "step": {
@@ -502,4 +506,28 @@ async fn signing_in_shows_a_code_and_finishes_in_the_background() {
     // The sign-in session offers the runtime nothing to do.
     let create = &sent(&seen, "session.create")[0]["params"];
     assert_eq!(create["availableTools"], json!(["sitewright_no_tools"]));
+}
+
+#[tokio::test]
+async fn the_accounts_models_are_listed_by_name_and_remembered() {
+    use sw_llm::copilot::available_models_with;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let fake = Fake {
+        script: Script::PlainAnswer,
+        seen: seen.clone(),
+    };
+    let models = available_models_with(&fake, false).await.unwrap();
+    let listed: Vec<(&str, &str)> = models
+        .iter()
+        .map(|m| (m.id.as_str(), m.name.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [("claude-alpha", "alpha (preview)"), ("gpt-zeta", "Zeta")]
+    );
+    // A second look does not start the runtime again; a refresh does.
+    available_models_with(&fake, false).await.unwrap();
+    assert_eq!(seen.lock().unwrap().connections, 1);
+    available_models_with(&fake, true).await.unwrap();
+    assert_eq!(seen.lock().unwrap().connections, 2);
 }
