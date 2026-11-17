@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) as \"n!: i64\" FROM site_jobs\n               WHERE site_id = ?1 AND kind = 'job' AND status IN ('queued', 'running')",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "704c8ff4b72aae19a1dd507695b29ee58edc6746da863aa1c046949a45d8dec5"
+}

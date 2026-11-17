@@ -192,7 +192,7 @@ pub fn definitions() -> Vec<ToolDef> {
         ),
         def(
             "test_backend",
-            "Send one HTTP request to this site's UNPUBLISHED backend (the files under backend/ in the working tree) and return the response and console output. It runs against a private copy of the site's database with the working tree's migrations applied, so nothing live changes. The copy is kept between calls until the backend's files change.",
+            "Send one HTTP request to this site's UNPUBLISHED backend (the files under backend/ in the working tree) and return the response and console output. Or, with `job` or `schedule` instead of method and path, run that background job or scheduled task once, now. It runs against a private copy of the site's database with the working tree's migrations applied, so nothing live changes. The copy is kept between calls until the backend's files change. Jobs the code enqueues are listed, not run; run one with `job`.",
             schema(
                 json!({
                     "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
@@ -201,13 +201,16 @@ pub fn definitions() -> Vec<ToolDef> {
                     "content_type": { "type": "string", "description": "Default application/json. Use application/x-www-form-urlencoded to test a form post." },
                     "cookie": { "type": "string", "description": "A Cookie header to send, for example the name=value part of a set-cookie you got back from a sign-in, to test as a signed-in visitor." },
                     "reset": { "type": "boolean", "description": "Start again from a fresh copy of the live data." },
+                    "job": { "type": "string", "description": "Instead of a request: run the job declared with jobs.define(name, ...) once." },
+                    "payload": { "description": "The job's payload, any JSON value. Only with `job`." },
+                    "schedule": { "type": "string", "description": "Instead of a request: run the task declared with jobs.schedule(name, ...) once." },
                 }),
-                &["method", "path"],
+                &[],
             ),
         ),
         def(
             "backend_logs",
-            "Recent console output (console.log, errors with stack traces) of this site's backend, live and draft, oldest first.",
+            "Recent console output (console.log, errors with stack traces) of this site's backend, live and draft, oldest first; and the recent runs of its background jobs and scheduled tasks, with their errors.",
             schema(
                 json!({ "limit": { "type": "integer", "description": "How many lines, 1 to 200. Default 50." } }),
                 &[],
@@ -425,6 +428,39 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                     "download": format!("the Export buttons on the site page, or `sitewright export {} --format {}`", ctx.site, format.as_str()),
                 }))
             }
+            "test_backend" if text("job").is_some() || text("schedule").is_some() => {
+                let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
+                let task = match (text("job"), text("schedule")) {
+                    (Some(name), None) => sw_backend::DraftTask::Job {
+                        name: name.to_owned(),
+                        payload: args.get("payload").cloned().unwrap_or(Value::Null),
+                    },
+                    (None, Some(name)) => sw_backend::DraftTask::Schedule { name: name.to_owned() },
+                    _ => return Err(ToolOutcome::error("give either job or schedule, not both")),
+                };
+                let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
+                let root = ctx.store.working_tree(&ctx.site).await.map_err(fail)?;
+                let source = tokio::task::spawn_blocking(move || sw_backend::BackendSource::read(&root))
+                    .await
+                    .map_err(|e| ToolOutcome::error(e.to_string()))?
+                    .map_err(ToolOutcome::error)?
+                    .ok_or_else(|| ToolOutcome::error("this site has no backend/index.js yet; write it first"))?;
+                let reset = args.get("reset").and_then(Value::as_bool).unwrap_or(false);
+                let outcome = backends
+                    .test_draft_task(site.id, &site.name, source, task, reset)
+                    .await
+                    .map_err(ToolOutcome::error)?;
+                let error = (outcome.status != 200).then(|| outcome.body.clone());
+                ToolOutcome::ok(json!({
+                    "ok": error.is_none(),
+                    "error": error,
+                    "console": outcome.logs.iter().map(|l| format!("[{}] {}", l.level, l.message)).collect::<Vec<_>>(),
+                    "jobs_enqueued": outcome.jobs_enqueued,
+                    "declared": outcome.tasks,
+                    "declared_problem": outcome.tasks_problem,
+                    "migrations_applied": outcome.migrations_applied,
+                }))
+            }
             "test_backend" => {
                 let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;
                 let method = required("method")?.to_ascii_uppercase();
@@ -469,6 +505,8 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                     "body": crate::events::shorten(&outcome.body),
                     "console": outcome.logs.iter().map(|l| format!("[{}] {}", l.level, l.message)).collect::<Vec<_>>(),
                     "migrations_applied": outcome.migrations_applied,
+                    "jobs_enqueued": outcome.jobs_enqueued,
+                    "declared_problem": outcome.tasks_problem,
                 }))
             }
             "backend_logs" => {
@@ -476,7 +514,12 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
                 let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200) as usize;
                 let site = ctx.store.get(&ctx.site).await.map_err(fail)?;
                 // Secret values are replaced by their names before the model sees a line.
-                ToolOutcome::ok(json!({ "lines": backends.logs_redacted(site.id, limit) }))
+                let jobs = backends.jobs(site.id, 20).await.map_err(ToolOutcome::error)?;
+                ToolOutcome::ok(json!({
+                    "lines": backends.logs_redacted(site.id, limit),
+                    "schedules": backends.schedules(site.id).await,
+                    "jobs": jobs,
+                }))
             }
             "backend_access" => {
                 let backends = ctx.backends.as_ref().ok_or_else(no_backends)?;

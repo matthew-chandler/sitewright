@@ -95,6 +95,27 @@
 <section>
   <h2>Backend</h2>
   <p class="muted">This site has a backend that answers <code>/api/</code> requests.{% if !b.database.is_empty() %} Its database is {{ b.database }}.{% endif %}</p>
+  {% if !b.schedules.is_empty() || !b.jobs.is_empty() %}
+  <details>
+    <summary>Background jobs{% if b.pending_jobs > 0 %} ({{ b.pending_jobs }} waiting){% endif %}</summary>
+    {% if !b.schedules.is_empty() %}
+    <p class="muted">Scheduled tasks (times in UTC):</p>
+    <ul class="list">
+      {% for s in b.schedules %}
+      <li><strong>{{ s.name }}</strong> <code>{{ s.cron }}</code> <span class="muted">next run {{ s.next }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if !b.jobs.is_empty() %}
+    <p class="muted">Recent runs:</p>
+    <ul class="list backend-log">
+      {% for j in b.jobs %}
+      <li><span class="badge {% if j.status == "failed" %}error{% endif %}">{{ j.status }}</span> {{ j.kind }} <strong>{{ j.name }}</strong> <span class="muted">{{ j.when }}{% if !j.attempts.is_empty() %}, {{ j.attempts }}{% endif %}</span>{% if !j.error.is_empty() %} <code>{{ j.error }}</code>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </details>
+  {% endif %}
   {% if b.logs.is_empty() %}
   <p class="empty">No console output yet.</p>
   {% else %}
@@ -102,7 +123,7 @@
     <summary>Console output ({{ b.logs.len() }} most recent lines)</summary>
     <ul class="list backend-log">
       {% for line in b.logs %}
-      <li><span class="badge {{ line.level }}">{{ line.level }}</span>{% if line.draft %} <span class="badge">draft</span>{% endif %} <span class="muted">{{ line.when }}</span> <code>{{ line.message }}</code></li>
+      <li><span class="badge {{ line.level }}">{{ line.level }}</span>{% if line.draft %} <span class="badge">draft</span>{% endif %}{% if line.background %} <span class="badge">background</span>{% endif %} <span class="muted">{{ line.when }}</span> <code>{{ line.message }}</code></li>
       {% endfor %}
     </ul>
   </details>

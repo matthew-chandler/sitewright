@@ -176,6 +176,18 @@ pub fn ago(ts: i64) -> String {
     format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
 }
 
+/// How long until `ts`, as "in 5 minutes".
+pub fn until(ts: i64) -> String {
+    let seconds = (ts - now_ms()).max(0) / 1000;
+    let (n, unit) = match seconds {
+        0..=59 => return "within a minute".into(),
+        60..=3599 => ((seconds + 59) / 60, "minute"),
+        3600..=86_399 => (seconds / 3600, "hour"),
+        _ => (seconds / 86_400, "day"),
+    };
+    format!("in {n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
 fn shorten(text: &str, max: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= max {
@@ -357,6 +369,24 @@ struct BackendLogRow {
     level: String,
     message: String,
     draft: bool,
+    background: bool,
+}
+
+struct ScheduleRow {
+    name: String,
+    cron: String,
+    next: String,
+}
+
+struct JobRow {
+    /// "job" or "schedule".
+    kind: String,
+    name: String,
+    status: String,
+    when: String,
+    /// "attempt 2 of 3", for jobs tried more than once.
+    attempts: String,
+    error: String,
 }
 
 /// What the site page shows about a site's backend.
@@ -364,6 +394,10 @@ struct BackendView {
     /// Size of the site's database, for example "48 KB"; empty when there is none.
     database: String,
     logs: Vec<BackendLogRow>,
+    schedules: Vec<ScheduleRow>,
+    jobs: Vec<JobRow>,
+    /// Jobs waiting or running.
+    pending_jobs: i64,
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -672,7 +706,50 @@ async fn site_page(
         .sites()
         .iter()
         .any(|route| route.site_id == info.site.id && route.backend);
+    let (schedules, jobs, pending_jobs) = if has_backend {
+        let schedules = state
+            .backend
+            .schedules(info.site.id)
+            .await
+            .into_iter()
+            .map(|s| ScheduleRow {
+                name: s.name,
+                cron: s.cron,
+                next: s.next_at.map(until).unwrap_or_default(),
+            })
+            .collect();
+        let jobs = state
+            .backend
+            .jobs(info.site.id, 20)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|j| JobRow {
+                when: match (j.status.as_str(), j.finished_at) {
+                    ("queued", _) if j.run_at > now_ms() => until(j.run_at),
+                    (_, Some(finished)) => ago(finished),
+                    _ => ago(j.created_at),
+                },
+                attempts: if j.kind == "job" && j.attempts > 1 {
+                    format!("attempt {} of {}", j.attempts, j.max_attempts)
+                } else {
+                    String::new()
+                },
+                kind: j.kind,
+                name: j.name,
+                status: j.status,
+                error: j.error.unwrap_or_default(),
+            })
+            .collect();
+        let pending = state.backend.pending_jobs(info.site.id).await.unwrap_or(0);
+        (schedules, jobs, pending)
+    } else {
+        (Vec::new(), Vec::new(), 0)
+    };
     let backend = has_backend.then(|| BackendView {
+        schedules,
+        jobs,
+        pending_jobs,
         database: state
             .backend
             .database_size(&info.site.name)
@@ -688,6 +765,7 @@ async fn site_page(
                 level: line.level,
                 message: line.message,
                 draft: line.draft,
+                background: line.background,
             })
             .collect(),
     });

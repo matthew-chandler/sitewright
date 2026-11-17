@@ -380,6 +380,11 @@ pub struct BackendsConfig {
     pub idle_secs: u64,
     /// Most worker processes alive at once, across all sites.
     pub max_workers: usize,
+    /// Let backends run background jobs and scheduled tasks (`jobs` in the backend API).
+    pub jobs: bool,
+    /// Longest a job or scheduled task may run, in seconds, not counting the time it
+    /// waits for the database, outside requests or AI models.
+    pub job_timeout_secs: u64,
     /// Set by the daemon from `domains.public_scheme`, not from the file: whether
     /// visitor-session cookies are marked `Secure`.
     #[serde(skip)]
@@ -395,6 +400,8 @@ impl Default for BackendsConfig {
             max_db_mb: 100,
             idle_secs: 300,
             max_workers: 8,
+            jobs: true,
+            job_timeout_secs: 30,
             secure_cookies: true,
         }
     }

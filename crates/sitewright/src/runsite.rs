@@ -174,6 +174,31 @@ pub async fn prepare(args: &RunSiteArgs) -> anyhow::Result<(axum::Router, Socket
                 .with_context(|| format!("TRUSTED_PROXIES: {s:?} is not a network like 10.0.0.0/8"))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // Scheduled tasks and queued jobs, as inside Sitewright.
+    if manifest.backend {
+        let jobs = backends.clone();
+        let live = vec![sw_backend::LiveBackend {
+            site_id: SITE_ID,
+            site: name.clone(),
+            sha: manifest.release.clone(),
+            root: args.site_dir.clone(),
+        }];
+        tokio::spawn(async move {
+            if let Err(error) = jobs.recover_jobs().await {
+                tracing::error!(%error, "could not settle interrupted background jobs");
+            }
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(10));
+            let mut ticks: u64 = 0;
+            loop {
+                ticker.tick().await;
+                jobs.run_due(live.clone()).await;
+                if ticks.is_multiple_of(360) {
+                    let _ = jobs.prune_jobs().await;
+                }
+                ticks += 1;
+            }
+        });
+    }
     let state = Standalone {
         backends,
         name: Arc::new(name),

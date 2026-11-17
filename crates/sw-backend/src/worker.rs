@@ -15,7 +15,10 @@ use rquickjs::loader::{Loader, Resolver};
 use rquickjs::module::Declared;
 use rquickjs::{CatchResultExt, Context, Ctx, Exception, Function, Module, Object, Runtime, Value};
 
-use crate::protocol::{FromWorker, RequestMsg, ResponseMsg, ToWorker, read_frame, write_frame};
+use crate::protocol::{
+    Declared as Tasks, FromWorker, RequestMsg, ResponseMsg, TaskMsg, ToWorker, read_frame,
+    write_frame,
+};
 use crate::sandbox;
 
 /// The module backends import their API from.
@@ -27,8 +30,10 @@ pub const ENTRY: &str = "backend/index.js";
 const PRELUDE: &str = include_str!("prelude.js");
 const BOOTSTRAP: &str = "\
 import app from 'backend/index.js';
-import { __dispatch } from 'sitewright';
+import { __dispatch, __runTask, __declared } from 'sitewright';
 globalThis.__handle = (raw) => __dispatch(app, raw);
+globalThis.__task = (raw) => __runTask(raw);
+globalThis.__declared = () => __declared();
 ";
 /// How long loading the backend's modules may take.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
@@ -219,7 +224,7 @@ fn run<R: Read + 'static, W: Write + 'static>(mut channel: Channel<R, W>) -> io:
 
     // Load: install the host functions, then import the backend.
     deadline.set(Some(Instant::now() + LOAD_TIMEOUT));
-    let loaded: Result<(), String> = context.with(|ctx| {
+    let loaded: Result<Tasks, String> = context.with(|ctx| {
         let host = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
         let ch = channel.clone();
         let call_deadline = deadline.clone();
@@ -271,22 +276,33 @@ fn run<R: Read + 'static, W: Write + 'static>(mut channel: Channel<R, W>) -> io:
             .catch(&ctx)
             .map_err(describe)?;
         promise.finish::<Value>().catch(&ctx).map_err(describe)?;
-        Ok(())
+        // Declaring tasks ends with loading; what was declared goes to the daemon.
+        let declared: Function<'_> = ctx
+            .globals()
+            .get("__declared")
+            .catch(&ctx)
+            .map_err(describe)?;
+        let text: String = declared.call(()).catch(&ctx).map_err(describe)?;
+        serde_json::from_str::<Tasks>(&text).map_err(|e| e.to_string())
     });
     deadline.set(None);
-    if let Err(message) = loaded {
-        let message = if timed_out.get() {
-            "loading the backend took too long".to_owned()
-        } else {
-            message
-        };
-        return fatal(&mut channel.borrow_mut(), message);
-    }
-    channel.borrow_mut().send(&FromWorker::Ready)?;
+    let tasks = match loaded {
+        Ok(tasks) => tasks,
+        Err(message) => {
+            let message = if timed_out.get() {
+                "loading the backend took too long".to_owned()
+            } else {
+                message
+            };
+            return fatal(&mut channel.borrow_mut(), message);
+        }
+    };
+    channel.borrow_mut().send(&FromWorker::Ready { tasks })?;
 
     loop {
-        let request = match channel.borrow_mut().receive()? {
-            Some(ToWorker::Request(request)) => request,
+        let work = match channel.borrow_mut().receive()? {
+            Some(ToWorker::Request(request)) => Work::Request(request),
+            Some(ToWorker::Task(task)) => Work::Task(task),
             Some(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -295,13 +311,18 @@ fn run<R: Read + 'static, W: Write + 'static>(mut channel: Channel<R, W>) -> io:
             }
             None => return Ok(()),
         };
-        deadline.set(Some(
-            Instant::now() + Duration::from_millis(request.timeout_ms),
-        ));
-        let result = context.with(|ctx| handle(&ctx, &request));
+        let timeout_ms = match &work {
+            Work::Request(request) => request.timeout_ms,
+            Work::Task(task) => task.timeout_ms,
+        };
+        deadline.set(Some(Instant::now() + Duration::from_millis(timeout_ms)));
+        let result = context.with(|ctx| match &work {
+            Work::Request(request) => handle(&ctx, request).map(FromWorker::Response),
+            Work::Task(task) => run_task(&ctx, task),
+        });
         deadline.set(None);
         let reply = match result {
-            Ok(response) => FromWorker::Response(response),
+            Ok(reply) => reply,
             // After a timeout or running out of memory the engine's state is not
             // trustworthy; the daemon starts a fresh worker.
             Err(_) if timed_out.get() => FromWorker::Failed {
@@ -320,6 +341,35 @@ fn run<R: Read + 'static, W: Write + 'static>(mut channel: Channel<R, W>) -> io:
         }
         runtime.run_gc();
     }
+}
+
+enum Work {
+    Request(RequestMsg),
+    Task(TaskMsg),
+}
+
+/// Run a background task. A handler that throws is an ordinary outcome (`error` set),
+/// not a failure of the worker.
+fn run_task(ctx: &Ctx<'_>, task: &TaskMsg) -> Result<FromWorker, String> {
+    let raw = serde_json::json!({
+        "kind": task.kind,
+        "name": task.name,
+        "payload": task.payload,
+        "info": task.info,
+    })
+    .to_string();
+    let runner: Function<'_> = ctx.globals().get("__task").catch(ctx).map_err(describe)?;
+    let pending: rquickjs::Promise<'_> = runner.call((raw,)).catch(ctx).map_err(describe)?;
+    let out: String = pending.finish().catch(ctx).map_err(describe)?;
+    #[derive(serde::Deserialize)]
+    struct Outcome {
+        error: Option<String>,
+    }
+    let outcome: Outcome = serde_json::from_str(&out)
+        .map_err(|e| format!("the task returned an invalid result: {e}"))?;
+    Ok(FromWorker::TaskDone {
+        error: outcome.error,
+    })
 }
 
 fn handle(ctx: &Ctx<'_>, request: &RequestMsg) -> Result<ResponseMsg, String> {

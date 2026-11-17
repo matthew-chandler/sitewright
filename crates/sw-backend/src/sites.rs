@@ -5,8 +5,11 @@
 //! - Publishing: before a release goes live its code must load and its migrations must
 //!   apply; the database is copied first and put back if the release is rolled back.
 //! - Drafts: the agent can try unpublished code against a copy of the site's data.
+//! - Background work: queued jobs and scheduled tasks of the live release run in the
+//!   site's background worker, with the same host calls (and so the same access) as its
+//!   request handlers.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -22,9 +25,11 @@ use sw_core::{DataDir, SiteName};
 use sw_sites::{ReleaseHooks, ReleasePlan};
 
 use crate::egress::{Egress, FetchRequest, normalize_host};
+use crate::jobs::{Cron, JobRecord, JobStore, NewJob, ScheduleInfo};
 use crate::manager::{
     BackendError, BackendRequest, BackendResponse, Backends, Host, Limits, Target, WorkerCommand,
 };
+use crate::protocol::{Declared, DeclaredSchedule, TaskKind, TaskMsg};
 use crate::secrets::SiteSecrets;
 use crate::sitedb::{DbLimits, Migration, ReadRows, SiteDb, SiteDbs};
 
@@ -44,6 +49,8 @@ pub struct LogLine {
     pub message: String,
     /// From a draft the agent was testing, not from the live site.
     pub draft: bool,
+    /// From a background task (a job or a scheduled run), not from a request.
+    pub background: bool,
 }
 
 /// A backend's code as read from a directory.
@@ -151,7 +158,18 @@ struct SiteHost {
     llm: crate::llm::LlmGateway,
     dbs: SiteDbs,
     logs: Mutex<HashMap<i64, VecDeque<LogLine>>>,
+    jobs: JobStore,
+    /// Whether background jobs and schedules may run on this server.
+    jobs_enabled: bool,
+    /// What the most recently started worker of each (site, draft) declared, with the
+    /// version of the code it ran.
+    declared: Mutex<HashMap<(i64, bool), (String, Declared)>>,
+    /// Jobs a draft enqueued while the agent tested it. They are reported, not run.
+    draft_jobs: Mutex<HashMap<i64, Vec<Value>>>,
 }
+
+/// Most jobs remembered per draft test.
+const MAX_DRAFT_JOBS: usize = 50;
 
 impl SiteHost {
     fn db_path(&self, site: &str, draft: bool) -> Result<PathBuf, String> {
@@ -167,6 +185,47 @@ impl SiteHost {
         self.dbs
             .get(&self.db_path(&target.site, target.draft)?)
             .await
+    }
+
+    fn declared_for(&self, target: &Target) -> Option<Declared> {
+        self.declared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&(target.site_id, target.draft))
+            .filter(|(version, _)| *version == target.version)
+            .map(|(_, declared)| declared.clone())
+    }
+
+    /// `jobs.enqueue`: queue a job for this site. A draft's jobs are only recorded, for
+    /// the agent to see and run by hand.
+    async fn enqueue(&self, target: &Target, args: &Value) -> Result<Value, String> {
+        if !self.jobs_enabled {
+            return Err("background jobs are turned off on this server".into());
+        }
+        let job = NewJob::from_args(args)?;
+        if let Some(declared) = self.declared_for(target)
+            && !declared.jobs.contains(&job.name)
+        {
+            return Err(format!(
+                "there is no job named {0}; declare it at the top level with jobs.define(\"{0}\", async (payload) => {{ ... }})",
+                job.name
+            ));
+        }
+        if target.draft {
+            let mut drafts = self.draft_jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let list = drafts.entry(target.site_id).or_default();
+            if list.len() < MAX_DRAFT_JOBS {
+                list.push(serde_json::json!({
+                    "name": job.name,
+                    "payload": serde_json::from_str::<Value>(&job.payload).unwrap_or(Value::Null),
+                    "delaySeconds": job.delay_ms / 1000,
+                    "attempts": job.attempts,
+                }));
+            }
+            return Ok(serde_json::json!({ "id": null, "test": true }));
+        }
+        let id = self.jobs.enqueue(target.site_id, &job).await?;
+        Ok(serde_json::json!({ "id": id }))
     }
 }
 
@@ -314,6 +373,7 @@ impl Host for SiteHost {
                 }
                 "http.fetch" => self.fetch(target, args).await,
                 "llm.chat" => self.llm.chat(target.site_id, &args).await,
+                "jobs.enqueue" => self.enqueue(target, &args).await,
                 op if op.starts_with("auth.") => {
                     let db = self.db(target).await?;
                     self.auth.call(target.site_id, &db, op, &args).await
@@ -344,7 +404,18 @@ impl Host for SiteHost {
             level: level.to_owned(),
             message,
             draft: target.draft,
+            background: target.background,
         });
+    }
+
+    fn loaded(&self, target: &Target, tasks: &Declared) {
+        self.declared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                (target.site_id, target.draft),
+                (target.version.clone(), tasks.clone()),
+            );
     }
 }
 
@@ -358,6 +429,78 @@ pub struct DraftOutcome {
     pub logs: Vec<LogLine>,
     /// Migrations applied to the test database for this request.
     pub migrations_applied: Vec<String>,
+    /// The jobs and schedules the draft's code declares.
+    pub tasks: Declared,
+    /// Why the declared jobs or schedules would stop a publish, if they would.
+    pub tasks_problem: Option<String>,
+    /// Jobs the code enqueued while handling this. In a test they are not run; run one
+    /// with [`DraftTask::Job`].
+    pub jobs_enqueued: Vec<Value>,
+}
+
+/// A background task to try against a draft.
+#[derive(Debug, Clone)]
+pub enum DraftTask {
+    Job { name: String, payload: Value },
+    Schedule { name: String },
+}
+
+/// What a draft test runs.
+enum DraftWork {
+    Request(BackendRequest),
+    Task(DraftTask),
+}
+
+/// A site whose live release has a backend: what the scheduler works through.
+#[derive(Debug, Clone)]
+pub struct LiveBackend {
+    pub site_id: i64,
+    pub site: SiteName,
+    pub sha: String,
+    /// The release directory.
+    pub root: PathBuf,
+}
+
+/// The scheduled tasks of a site's live release, and when each runs next.
+struct LiveTasks {
+    sha: String,
+    declared: Declared,
+    schedules: Vec<(DeclaredSchedule, Cron, i64)>,
+}
+
+impl LiveTasks {
+    fn new(sha: String, declared: Declared, now: i64) -> Self {
+        let schedules = declared
+            .schedules
+            .iter()
+            .filter_map(|s| {
+                let cron = Cron::parse(&s.cron).ok()?;
+                let next = cron.next_after(now)?;
+                Some((s.clone(), cron, next))
+            })
+            .collect();
+        Self {
+            sha,
+            declared,
+            schedules,
+        }
+    }
+}
+
+/// Removes a site from the set of sites with background work in progress, also when
+/// the work panics.
+struct Running {
+    set: Arc<Mutex<HashSet<i64>>>,
+    site_id: i64,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.set
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.site_id);
+    }
 }
 
 struct Inner {
@@ -369,6 +512,12 @@ struct Inner {
     snapshots: Mutex<HashMap<i64, Option<PathBuf>>>,
     /// The digest of the draft each site's test database was prepared for.
     drafts: tokio::sync::Mutex<HashMap<i64, String>>,
+    /// What a release being published declared, from `prepare` until `commit`.
+    publishing: Mutex<HashMap<i64, (String, Declared)>>,
+    /// The scheduled tasks of each site's live release.
+    live_tasks: tokio::sync::Mutex<HashMap<i64, LiveTasks>>,
+    /// Sites whose background work is in progress.
+    running: Arc<Mutex<HashSet<i64>>>,
 }
 
 /// Site backends. Cheap to clone.
@@ -451,11 +600,16 @@ impl SiteBackends {
             memory_bytes: config.memory_mb.max(8) * 1024 * 1024,
             idle: Duration::from_secs(config.idle_secs.max(1)),
             max_workers: config.max_workers.max(1),
+            task_timeout: Duration::from_secs(config.job_timeout_secs.max(1)),
             ..Limits::default()
         };
         let host = Arc::new(SiteHost {
             secrets,
             llm: crate::llm::LlmGateway::new(pool.clone()),
+            jobs: JobStore::new(pool.clone()),
+            jobs_enabled: config.enabled && config.jobs,
+            declared: Mutex::new(HashMap::new()),
+            draft_jobs: Mutex::new(HashMap::new()),
             pool,
             egress,
             auth: crate::auth::Auth::new(secure),
@@ -473,6 +627,9 @@ impl SiteBackends {
                 host,
                 snapshots: Mutex::new(HashMap::new()),
                 drafts: tokio::sync::Mutex::new(HashMap::new()),
+                publishing: Mutex::new(HashMap::new()),
+                live_tasks: tokio::sync::Mutex::new(HashMap::new()),
+                running: Arc::new(Mutex::new(HashSet::new())),
             }),
         }
     }
@@ -499,6 +656,7 @@ impl SiteBackends {
             site: site.as_str().to_owned(),
             version: sha.to_owned(),
             draft: false,
+            background: false,
         };
         let root = root.to_owned();
         self.inner
@@ -526,6 +684,33 @@ impl SiteBackends {
         request: BackendRequest,
         reset: bool,
     ) -> Result<DraftOutcome, String> {
+        self.draft(site_id, site, source, DraftWork::Request(request), reset)
+            .await
+    }
+
+    /// Run a job or a scheduled task of unpublished code once, now, the way
+    /// [`Self::test_draft`] runs a request. The outcome's status is 200 when the task
+    /// finished and 500 when it threw; the body then holds the error.
+    pub async fn test_draft_task(
+        &self,
+        site_id: i64,
+        site: &SiteName,
+        source: BackendSource,
+        task: DraftTask,
+        reset: bool,
+    ) -> Result<DraftOutcome, String> {
+        self.draft(site_id, site, source, DraftWork::Task(task), reset)
+            .await
+    }
+
+    async fn draft(
+        &self,
+        site_id: i64,
+        site: &SiteName,
+        source: BackendSource,
+        work: DraftWork,
+        reset: bool,
+    ) -> Result<DraftOutcome, String> {
         if !self.inner.enabled {
             return Err("backends are turned off on this server".into());
         }
@@ -536,6 +721,7 @@ impl SiteBackends {
             site: site.as_str().to_owned(),
             version: digest.clone(),
             draft: true,
+            background: false,
         };
         let draft_path = host.db_path(site.as_str(), true)?;
         let mut drafts = self.inner.drafts.lock().await;
@@ -557,13 +743,60 @@ impl SiteBackends {
         drop(drafts);
 
         let before = self.log_count(site_id);
+        host.draft_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&site_id);
         let files = source.files;
-        let response = self
-            .inner
-            .backends
-            .handle(&target, move || Ok(files), request)
-            .await
-            .map_err(|e| e.to_string());
+        let response = match work {
+            DraftWork::Request(request) => self
+                .inner
+                .backends
+                .handle(&target, move || Ok(files), request)
+                .await
+                .map_err(|e| e.to_string()),
+            DraftWork::Task(task) => {
+                if !host.jobs_enabled {
+                    return Err("background jobs are turned off on this server".into());
+                }
+                let (kind, name, payload) = match task {
+                    DraftTask::Job { name, payload } => (TaskKind::Job, name, payload),
+                    DraftTask::Schedule { name } => (TaskKind::Schedule, name, Value::Null),
+                };
+                let info = serde_json::json!({
+                    "name": name,
+                    "id": null,
+                    "attempt": 1,
+                    "scheduledAt": sw_core::time::now_ms(),
+                    "test": true,
+                });
+                let message = TaskMsg {
+                    kind,
+                    name,
+                    payload,
+                    info,
+                    timeout_ms: 0,
+                };
+                self.inner
+                    .backends
+                    .run_task(&target, move || Ok(files), message)
+                    .await
+                    .map(|error| BackendResponse {
+                        status: if error.is_some() { 500 } else { 200 },
+                        headers: Vec::new(),
+                        body: error.unwrap_or_default(),
+                    })
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let tasks = host.declared_for(&target).unwrap_or_default();
+        let tasks_problem = crate::jobs::validate(&tasks).err();
+        let jobs_enqueued = host
+            .draft_jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&site_id)
+            .unwrap_or_default();
         let logs: Vec<LogLine> = self
             .logs(site_id, LOG_LINES)
             .into_iter()
@@ -591,6 +824,9 @@ impl SiteBackends {
                 body: redact(&response.body),
                 logs,
                 migrations_applied,
+                tasks,
+                tasks_problem,
+                jobs_enqueued,
             }),
             Err(error) => {
                 let console: Vec<String> = logs
@@ -815,6 +1051,7 @@ impl SiteBackends {
             }
         }
         self.inner.drafts.lock().await.remove(&site_id);
+        self.inner.live_tasks.lock().await.remove(&site_id);
     }
 
     /// Stop workers that have been idle too long. Call periodically.
@@ -825,6 +1062,334 @@ impl SiteBackends {
     /// How many workers are alive.
     pub fn workers(&self) -> usize {
         self.inner.backends.alive()
+    }
+
+    /// Whether background jobs and schedules run on this server.
+    pub fn jobs_enabled(&self) -> bool {
+        self.inner.host.jobs_enabled
+    }
+
+    /// At start-up, before the first [`Self::run_due`]: settle work that was running
+    /// when the daemon last stopped.
+    pub async fn recover_jobs(&self) -> Result<u64, String> {
+        self.inner.host.jobs.recover().await
+    }
+
+    /// Forget finished jobs and runs older than a week. Call periodically.
+    pub async fn prune_jobs(&self) -> Result<u64, String> {
+        self.inner.host.jobs.prune(sw_core::time::now_ms()).await
+    }
+
+    /// The newest jobs and scheduled runs of a site, newest first. Errors have the
+    /// site's secret values replaced by their names.
+    pub async fn jobs(&self, site_id: i64, limit: i64) -> Result<Vec<JobRecord>, String> {
+        let mut records = self.inner.host.jobs.recent(site_id, limit).await?;
+        for record in &mut records {
+            if let Some(error) = &record.error {
+                record.error = Some(self.redact(site_id, error));
+            }
+        }
+        Ok(records)
+    }
+
+    /// How many jobs of a site are waiting or running.
+    pub async fn pending_jobs(&self, site_id: i64) -> Result<i64, String> {
+        self.inner.host.jobs.pending(site_id).await
+    }
+
+    /// The scheduled tasks of a site's live release and when each runs next. Empty
+    /// until the scheduler has seen the release (at publish, or its first pass).
+    pub async fn schedules(&self, site_id: i64) -> Vec<ScheduleInfo> {
+        self.inner
+            .live_tasks
+            .lock()
+            .await
+            .get(&site_id)
+            .map(|tasks| {
+                tasks
+                    .schedules
+                    .iter()
+                    .map(|(s, _, next)| ScheduleInfo {
+                        name: s.name.clone(),
+                        cron: s.cron.clone(),
+                        next_at: Some(*next),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Make every scheduled task of a site due now. For tests.
+    #[doc(hidden)]
+    pub async fn make_schedules_due(&self, site_id: i64) {
+        if let Some(tasks) = self.inner.live_tasks.lock().await.get_mut(&site_id) {
+            for (_, _, next) in &mut tasks.schedules {
+                *next = 0;
+            }
+        }
+    }
+
+    /// Whether background work of a site is in progress.
+    pub fn jobs_running(&self, site_id: i64) -> bool {
+        self.inner
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&site_id)
+    }
+
+    /// One pass of the scheduler: for each live backend, run the scheduled tasks that
+    /// are due and the queued jobs whose time has come. Each site's work runs in the
+    /// background, in its own worker, one task after another; a site whose previous
+    /// work is still running is skipped until it finishes. Call every few seconds.
+    pub async fn run_due(&self, live: Vec<LiveBackend>) {
+        if !self.inner.host.jobs_enabled {
+            return;
+        }
+        let now = sw_core::time::now_ms();
+        let with_jobs: HashSet<i64> = match self.inner.host.jobs.sites_with_due_jobs(now).await {
+            Ok(sites) => sites.into_iter().collect(),
+            Err(error) => {
+                tracing::error!(%error, "could not read the job queue");
+                HashSet::new()
+            }
+        };
+        let live_ids: HashSet<i64> = live.iter().map(|b| b.site_id).collect();
+        self.inner
+            .live_tasks
+            .lock()
+            .await
+            .retain(|id, _| live_ids.contains(id));
+        for backend in live {
+            let busy = self
+                .inner
+                .running
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&backend.site_id);
+            if busy {
+                continue;
+            }
+            let (due, jobs) = self.due_schedules(&backend, now).await;
+            let has_jobs = with_jobs.contains(&backend.site_id);
+            if due.is_empty() && !has_jobs {
+                continue;
+            }
+            self.inner
+                .running
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(backend.site_id);
+            let running = Running {
+                set: self.inner.running.clone(),
+                site_id: backend.site_id,
+            };
+            let this = self.clone();
+            tokio::spawn(async move {
+                let _running = running;
+                this.work(&backend, due, has_jobs.then_some(jobs)).await;
+            });
+        }
+    }
+
+    /// The schedules of a live backend that are due now (advancing each to its next
+    /// time), and the job names it declares. Learns what a release declares the first
+    /// time it sees it, by loading its code once.
+    async fn due_schedules(
+        &self,
+        backend: &LiveBackend,
+        now: i64,
+    ) -> (Vec<(String, i64)>, Vec<String>) {
+        let known = self
+            .inner
+            .live_tasks
+            .lock()
+            .await
+            .get(&backend.site_id)
+            .is_some_and(|t| t.sha == backend.sha);
+        if !known {
+            let declared = self.declared_by(backend).await;
+            self.inner.live_tasks.lock().await.insert(
+                backend.site_id,
+                LiveTasks::new(backend.sha.clone(), declared, now),
+            );
+        }
+        let mut all = self.inner.live_tasks.lock().await;
+        let Some(tasks) = all.get_mut(&backend.site_id) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut due = Vec::new();
+        for (schedule, cron, next) in &mut tasks.schedules {
+            if *next <= now {
+                due.push((schedule.name.clone(), *next));
+                // Missed runs (the server was down, or the previous run was long) are
+                // not made up: the next run is the next one after now.
+                *next = cron.next_after(now).unwrap_or(i64::MAX);
+            }
+        }
+        (due, tasks.declared.jobs.clone())
+    }
+
+    /// Load a live release's code in a throwaway worker to see what it declares.
+    async fn declared_by(&self, backend: &LiveBackend) -> Declared {
+        let source = match BackendSource::read(&backend.root) {
+            Ok(Some(source)) => source,
+            Ok(None) => return Declared::default(),
+            Err(error) => {
+                tracing::warn!(site = %backend.site, %error, "could not read the live backend");
+                return Declared::default();
+            }
+        };
+        let target = Target {
+            site_id: backend.site_id,
+            site: backend.site.as_str().to_owned(),
+            version: backend.sha.clone(),
+            draft: false,
+            background: true,
+        };
+        match self.inner.backends.check(&target, source.files).await {
+            Ok(declared) => match crate::jobs::validate(&declared) {
+                Ok(()) => declared,
+                Err(error) => {
+                    tracing::warn!(site = %backend.site, %error, "the live backend's schedules are not valid; none will run");
+                    Declared {
+                        jobs: declared.jobs,
+                        schedules: Vec::new(),
+                    }
+                }
+            },
+            Err(error) => {
+                tracing::warn!(site = %backend.site, %error, "the live backend does not load; its jobs cannot run");
+                Declared::default()
+            }
+        }
+    }
+
+    /// Run one site's due work, one task at a time, in its background worker.
+    async fn work(
+        &self,
+        backend: &LiveBackend,
+        due: Vec<(String, i64)>,
+        jobs: Option<Vec<String>>,
+    ) {
+        let host = &self.inner.host;
+        let target = Target {
+            site_id: backend.site_id,
+            site: backend.site.as_str().to_owned(),
+            version: backend.sha.clone(),
+            draft: false,
+            background: true,
+        };
+        let redact = |error: String| self.redact(backend.site_id, &error);
+        for (name, at) in due {
+            let id = match host.jobs.start_run(backend.site_id, &name, at).await {
+                Ok(id) => id,
+                Err(error) => {
+                    tracing::error!(site = %backend.site, %error, "could not record a scheduled run");
+                    continue;
+                }
+            };
+            let info =
+                serde_json::json!({ "name": name, "id": id, "attempt": 1, "scheduledAt": at });
+            let error = self
+                .task(
+                    &target,
+                    &backend.root,
+                    TaskKind::Schedule,
+                    &name,
+                    Value::Null,
+                    info,
+                )
+                .await
+                .map(redact);
+            if let Some(error) = &error {
+                tracing::info!(site = %backend.site, schedule = %name, %error, "scheduled task failed");
+            }
+            if let Err(e) = host.jobs.finish_run(id, error.as_deref()).await {
+                tracing::error!(site = %backend.site, error = %e, "could not record a scheduled run");
+            }
+        }
+        let Some(declared) = jobs else { return };
+        let claimed = match host
+            .jobs
+            .claim_due(backend.site_id, sw_core::time::now_ms(), crate::jobs::BATCH)
+            .await
+        {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                tracing::error!(site = %backend.site, %error, "could not take jobs from the queue");
+                return;
+            }
+        };
+        for job in claimed {
+            let (error, retry) = if declared.contains(&job.name) {
+                let info = serde_json::json!({
+                    "name": job.name,
+                    "id": job.id,
+                    "attempt": job.attempts,
+                    "attempts": job.max_attempts,
+                });
+                let error = self
+                    .task(
+                        &target,
+                        &backend.root,
+                        TaskKind::Job,
+                        &job.name,
+                        job.payload.clone(),
+                        info,
+                    )
+                    .await
+                    .map(redact);
+                (error, true)
+            } else {
+                (
+                    Some(format!(
+                        "the published backend has no job named {}; nothing ran",
+                        job.name
+                    )),
+                    false,
+                )
+            };
+            if let Err(e) = host.jobs.finish(&job, error.as_deref(), retry).await {
+                tracing::error!(site = %backend.site, error = %e, "could not record a job's outcome");
+            }
+        }
+    }
+
+    /// Run one task; `Some(error)` when it failed for any reason.
+    async fn task(
+        &self,
+        target: &Target,
+        root: &Path,
+        kind: TaskKind,
+        name: &str,
+        payload: Value,
+        info: Value,
+    ) -> Option<String> {
+        let root = root.to_owned();
+        let message = TaskMsg {
+            kind,
+            name: name.to_owned(),
+            payload,
+            info,
+            timeout_ms: 0,
+        };
+        let outcome = self
+            .inner
+            .backends
+            .run_task(
+                target,
+                move || match BackendSource::read(&root)? {
+                    Some(source) => Ok(source.files),
+                    None => Err("the release has no backend/index.js".into()),
+                },
+                message,
+            )
+            .await;
+        match outcome {
+            Ok(error) => error,
+            Err(error) => Some(error.to_string()),
+        }
     }
 
     fn snapshot_path(live: &Path) -> PathBuf {
@@ -875,13 +1440,21 @@ impl ReleaseHooks for SiteBackends {
                 site: plan.site.as_str().to_owned(),
                 version: plan.sha.clone(),
                 draft: true,
+                background: false,
             };
-            // 1. The code must load.
-            self.inner
+            // 1. The code must load, and what it declares must be valid.
+            let declared = self
+                .inner
                 .backends
                 .check(&target, source.files)
                 .await
                 .map_err(|e| e.to_string())?;
+            crate::jobs::validate(&declared)?;
+            self.inner
+                .publishing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(plan.site_id, (plan.sha.clone(), declared));
 
             // 2. Copy the database, then migrate it. The copy is what a failed publish
             //    goes back to.
@@ -912,7 +1485,14 @@ impl ReleaseHooks for SiteBackends {
     }
 
     fn abandon<'a>(&'a self, plan: &'a ReleasePlan) -> BoxFuture<'a, ()> {
-        Box::pin(self.restore(plan.site_id, &plan.site))
+        Box::pin(async move {
+            self.inner
+                .publishing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&plan.site_id);
+            self.restore(plan.site_id, &plan.site).await;
+        })
     }
 
     fn commit<'a>(&'a self, plan: &'a ReleasePlan) -> BoxFuture<'a, ()> {
@@ -923,6 +1503,20 @@ impl ReleaseHooks for SiteBackends {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&plan.site_id);
+            let published = self
+                .inner
+                .publishing
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&plan.site_id);
+            if let Some((sha, declared)) = published {
+                let tasks = LiveTasks::new(sha, declared, sw_core::time::now_ms());
+                self.inner
+                    .live_tasks
+                    .lock()
+                    .await
+                    .insert(plan.site_id, tasks);
+            }
         })
     }
 }

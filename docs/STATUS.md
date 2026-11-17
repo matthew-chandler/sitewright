@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-17 (1.11.0: uploads without a size limit; v1.6.0 is the last published tag)_
+_Last updated: 2026-11-17 (1.12.0: background jobs and schedules for backends; v1.6.0 is the last published tag)_
 
 ## Picking this up in a new session
 
@@ -11,9 +11,10 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 - Read `AGENTS.md` (rules and checks), then this file. `PLAN.md` is the original v1
   brief and `docs/ROADMAP.md` the approved follow-up; both are finished except where
-  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0010).
-- `main` is at **1.11.0**, and so is the dev VPS. The last published tag is **v1.6.0**;
-  1.7.0 to 1.11.0 are merged but untagged (Matthew publishes when he chooses).
+  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0011).
+- `main` is at **1.12.0** once the jobs PR merges; the dev VPS is at 1.11.0 until
+  `./scripts/deploy-dev.sh` runs. The last published tag is **v1.6.0**; 1.7.0 to 1.12.0
+  are merged but untagged (Matthew publishes when he chooses).
 - How a change ships here: branch, the four checks in `AGENTS.md`, PR, wait for the
   `ci-ok` check, squash-merge, `./scripts/deploy-dev.sh`. Never force-push; `gh` on
   this machine is old (no `--branch` on `gh run`, no `--json jobs`).
@@ -45,8 +46,8 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-2. **Optional: publish a release.** `main` is at 1.11.0; 1.6.0 is the last published
-   tag. `git tag -a v1.11.0 -m "Sitewright 1.11.0" && git push origin v1.11.0` publishes it; the
+2. **Optional: publish a release.** `main` is at 1.12.0; 1.6.0 is the last published
+   tag. `git tag -a v1.12.0 -m "Sitewright 1.12.0" && git push origin v1.12.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 3. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -202,6 +203,16 @@ site names.
     1.11.0 (your request of 2026-11-17) removes the size limit: confirm popup over
     15 MB, uploads sent in 8 MB parts with progress, streamed to disk, releases
     hard-link unchanged files, no photo shrinking (HEIC still converted). ADR-0010.
+  - **Background jobs and schedules** (your request of 2026-11-17): 1.12.0, ADR-0011.
+    Backend code declares `jobs.define` / `jobs.schedule(name, cron, fn)` and queues
+    with `jobs.enqueue`. They run in a second jailed worker per site through the same
+    host calls as requests, so database, secrets, approved hosts and `llm.chat` (with
+    the site's on/off switch and limits) apply unchanged. Queue and run history in
+    `site_jobs`; scheduler loop every 10 s in the daemon and in `run-site`. Site page
+    lists schedules and recent runs; `test_backend` runs a job/schedule on the draft.
+    Covered by `crates/sw-backend/tests/jobs.rs` and a daemon end-to-end test. Not
+    yet tried with a real model on the VPS. No per-site off switch (server-wide
+    `backends.jobs` only); add one if wanted.
   - **Other backend frameworks** (optional on the roadmap): not started. My advice is
     still to wait; say so if you want it built.
 
@@ -313,6 +324,12 @@ delete, agent-requested delete, provider test.
      check that neither sees the other's notes.
   4. Add a secret (any name and value) and prompt: "What secrets and hosts can this
      site's backend use?" The answer should name the secret and never show its value.
+- Background jobs (1.12.0), one prompt each, on a site with AI access turned on:
+  1. "When someone posts in the guestbook, have an AI write a one-line reply in the
+     background and show it under the post." Post, wait ~15 s, reload. Under
+     **Backend** → **Background jobs** the run shows as done.
+  2. "Every hour, delete guestbook posts that contain 'spam'." The schedule appears
+     with its next run time.
 - Uploads (1.11.0), on a phone: on a site's page, under **Your files**, upload a photo
   straight from the camera (HEIC arrives as `.webp` or `.jpg`; others unchanged), a
   video over 15 MB (a confirmation should pop up, then a percentage), and a small PNG

@@ -670,3 +670,70 @@ async fn a_site_is_containerized_at_creation_or_later_and_packaged_without_secre
 
     t.daemon.shutdown().await;
 }
+
+const WITH_JOBS: &str = r#"
+import { Router, json, db, jobs } from "sitewright";
+const app = new Router();
+jobs.define("thank", async (payload, info) => {
+  await db.run("insert into entries (name) values (?)", `thanks, ${payload.name} (attempt ${info.attempt})`);
+});
+jobs.schedule("cleanup", "0 3 * * *", async () => { await db.run("delete from entries where name like 'spam%'"); });
+app.post("/api/entries", async (req) => {
+  const { name } = await req.json();
+  await db.run("insert into entries (name) values (?)", name);
+  return json(await jobs.enqueue("thank", { name }), 202);
+});
+app.get("/api/entries", async () => json((await db.query("select name from entries order by id")).map((r) => r.name)));
+export default app;
+"#;
+
+#[tokio::test]
+async fn the_daemon_runs_queued_jobs_of_published_backends() {
+    let t = boot().await;
+    let dir = t.site_dir(
+        "jobs",
+        &[
+            ("index.html", INDEX),
+            ("backend/index.js", WITH_JOBS),
+            ("backend/migrations/0001_entries.sql", MIGRATION),
+        ],
+    );
+    t.cli(&["site", "import", "thanks", path_str(&dir)])
+        .await
+        .unwrap();
+    let queued = post_json(&t, "thanks", "/api/entries", json!({"name": "Ada"})).await;
+    assert_eq!(queued.status(), 202);
+    assert!(
+        queued.json::<Value>().await.unwrap()["id"]
+            .as_i64()
+            .is_some()
+    );
+
+    // The scheduler looks every ten seconds.
+    let start = std::time::Instant::now();
+    loop {
+        let names: Value = t
+            .get(&host("thanks"), "/api/entries")
+            .await
+            .json()
+            .await
+            .unwrap();
+        if names == json!(["Ada", "thanks, Ada (attempt 1)"]) {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(30),
+            "the job did not run: {names}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let site = t.daemon.state.store.get("thanks").await.unwrap();
+    let backend = &t.daemon.state.backend;
+    let schedules = backend.schedules(site.id).await;
+    assert_eq!(schedules[0].name, "cleanup");
+    let runs = backend.jobs(site.id, 10).await.unwrap();
+    assert_eq!(
+        (runs[0].name.as_str(), runs[0].status.as_str()),
+        ("thank", "done")
+    );
+}

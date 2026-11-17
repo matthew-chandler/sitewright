@@ -8,12 +8,15 @@
 //! daemon                         worker
 //!   Init            ─────────►
 //!                   ◄─────────   Ready | Failed
-//!   Request         ─────────►
+//!   Request | Task  ─────────►
 //!                   ◄─────────   Log*            (console output)
 //!                   ◄─────────   HostCall        (zero or more, each answered)
 //!   HostReply       ─────────►
-//!                   ◄─────────   Response | Failed
+//!                   ◄─────────   Response | TaskDone | Failed
 //! ```
+//!
+//! `Ready` carries the background tasks the code declared (`jobs.define`,
+//! `jobs.schedule`); a `Task` runs one of them.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
@@ -35,6 +38,8 @@ pub enum ToWorker {
         stack_bytes: u64,
     },
     Request(RequestMsg),
+    /// Run a scheduled task or a queued job.
+    Task(TaskMsg),
     /// The answer to a `HostCall`: exactly one of the two is set.
     HostReply {
         ok: Option<Value>,
@@ -57,6 +62,55 @@ pub struct RequestMsg {
     pub timeout_ms: u64,
 }
 
+/// Which kind of background task to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskKind {
+    /// A job from the site's queue (`jobs.enqueue`).
+    Job,
+    /// A recurring task (`jobs.schedule`).
+    Schedule,
+}
+
+impl TaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Job => "job",
+            Self::Schedule => "schedule",
+        }
+    }
+}
+
+/// One run of a background task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskMsg {
+    pub kind: TaskKind,
+    pub name: String,
+    /// What the job was queued with; `null` for a schedule.
+    pub payload: Value,
+    /// Facts the handler is given: id, attempt, scheduled time.
+    pub info: Value,
+    /// How long the handler may run, in milliseconds.
+    pub timeout_ms: u64,
+}
+
+/// The background tasks a backend's code declared when it loaded.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Declared {
+    /// Names of job handlers (`jobs.define`).
+    pub jobs: Vec<String>,
+    pub schedules: Vec<DeclaredSchedule>,
+}
+
+/// A recurring task as declared in code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredSchedule {
+    pub name: String,
+    /// A five-field cron expression, in UTC.
+    pub cron: String,
+}
+
 /// One HTTP response from the backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResponseMsg {
@@ -70,8 +124,15 @@ pub struct ResponseMsg {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum FromWorker {
     /// The backend's code loaded.
-    Ready,
+    Ready {
+        #[serde(default)]
+        tasks: Declared,
+    },
     Response(ResponseMsg),
+    /// A task finished; `error` is set when its handler threw.
+    TaskDone {
+        error: Option<String>,
+    },
     /// Loading or handling failed. After a `fatal` failure the worker exits.
     Failed {
         message: String,
@@ -128,7 +189,13 @@ mod tests {
     #[test]
     fn frames_round_trip_and_end_cleanly() {
         let mut buf = Vec::new();
-        write_frame(&mut buf, &FromWorker::Ready).unwrap();
+        write_frame(
+            &mut buf,
+            &FromWorker::Ready {
+                tasks: Declared::default(),
+            },
+        )
+        .unwrap();
         write_frame(
             &mut buf,
             &FromWorker::Log {
@@ -140,7 +207,7 @@ mod tests {
         let mut input = buf.as_slice();
         assert!(matches!(
             read_frame::<_, FromWorker>(&mut input).unwrap(),
-            Some(FromWorker::Ready)
+            Some(FromWorker::Ready { .. })
         ));
         match read_frame::<_, FromWorker>(&mut input).unwrap() {
             Some(FromWorker::Log { message, .. }) => assert_eq!(message, "héllo"),
