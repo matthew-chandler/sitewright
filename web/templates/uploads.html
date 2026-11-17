@@ -1,0 +1,33 @@
+<div id="uploads">
+  {% if !uploads.message.is_empty() %}
+  <p class="msg {% if uploads.error %}error{% else %}ok{% endif %}" role="{% if uploads.error %}alert{% else %}status{% endif %}">{{ uploads.message }}</p>
+  {% endif %}
+  {% if uploads.items.is_empty() %}
+  <p class="empty">No files uploaded yet.</p>
+  {% else %}
+  <ul class="list uploads">
+    {% for u in uploads.items %}
+    <li>
+      {% if u.is_image %}
+      <img class="thumb" src="/sites/{{ name }}/uploads/{{ u.file }}" alt="" loading="lazy">
+      {% else %}
+      <span class="thumb file-type" aria-hidden="true">{{ u.ext }}</span>
+      {% endif %}
+      <div class="upload-info">
+        <code>{{ u.path }}</code>
+        {% if u.live %}<span class="badge succeeded">live</span>{% else %}<span class="badge">not live yet</span>{% endif %}
+        <br>
+        <span class="muted">{{ u.size }}{% if !u.dims.is_empty() %} · {{ u.dims }}{% endif %}{% if u.live %} · <a class="external" href="{{ u.url }}" target="_blank" rel="noopener">open</a>{% endif %}</span>
+      </div>
+      <span class="row">
+        <button type="button" data-insert="{{ u.path }}" title="Add {{ u.path }} to the prompt box">Use</button>
+        <form hx-post="/sites/{{ name }}/uploads/{{ u.file }}/delete" hx-target="#uploads" hx-swap="outerHTML"
+              hx-confirm="Remove {{ u.path }} from the site?" hx-disabled-elt="find button">
+          <button type="submit">Remove</button>
+        </form>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>

@@ -1,6 +1,6 @@
 //! The system prompt: the agent's role, house rules and what it knows about the site.
 
-use sw_sites::{FileEntry, Release};
+use sw_sites::{FileEntry, Release, Upload};
 
 use crate::skills::SkillMeta;
 
@@ -20,6 +20,8 @@ pub struct SiteContext {
 pub struct ExistingSite {
     pub title: String,
     pub files: Vec<FileEntry>,
+    /// Files the owner uploaded, under `uploads/`.
+    pub uploads: Vec<Upload>,
     /// Newest first.
     pub releases: Vec<Release>,
     pub current_release: Option<i64>,
@@ -46,6 +48,12 @@ initial-scale=1\">`, a `<title>`, `lang` on `<html>`, readable font sizes and go
 contrast. Support dark mode with `color-scheme` or a `prefers-color-scheme` media query.
 - Keep everything self-contained: no external CDNs, fonts, scripts or images unless the \
 user explicitly asks. Use a system font stack. Draw simple graphics as inline SVG or CSS.
+- The owner can upload their own images, fonts, documents and data files in the portal. \
+They are under `uploads/`, listed below when there are any. Use them where they fit, \
+especially when the user mentions them; you cannot see an image, so go by its name, size \
+and the user's words, and write useful `alt` text from those. You may read text uploads, \
+but never change or delete anything in `uploads/`. If the user refers to a file that is \
+not there, say so and ask them to upload it in the portal.
 - Keep it light: plain HTML and CSS first, a little JavaScript only where it adds something. \
 Put shared styles in one CSS file. Files are limited to 1 MB and a site to 20 MB.
 - Write real content that fits the request. If the user gives few details, make sensible \
@@ -110,17 +118,42 @@ pub fn system_prompt(site: &SiteContext) -> String {
                 site.name, existing.title, site.url
             ));
             out.push_str("\n### Files in the working tree\n\n");
-            if existing.files.is_empty() {
+            // Uploads get their own list below.
+            let files: Vec<&FileEntry> = existing
+                .files
+                .iter()
+                .filter(|f| !sw_sites::confine::is_upload_path(&f.path))
+                .collect();
+            if files.is_empty() {
                 out.push_str("(none yet)\n");
             }
-            for file in existing.files.iter().take(200) {
+            for file in files.iter().take(200) {
                 out.push_str(&format!("- `{}` ({} bytes)\n", file.path, file.size));
             }
-            if existing.files.len() > 200 {
+            if files.len() > 200 {
                 out.push_str(&format!(
                     "- … and {} more; use `list_files`\n",
-                    existing.files.len() - 200
+                    files.len() - 200
                 ));
+            }
+            if !existing.uploads.is_empty() {
+                out.push_str("\n### Files the owner uploaded\n\n");
+                for upload in existing.uploads.iter().take(100) {
+                    let dims = match (upload.width, upload.height) {
+                        (Some(w), Some(h)) => format!(", {w}×{h} pixels"),
+                        _ => String::new(),
+                    };
+                    out.push_str(&format!(
+                        "- `{}` ({} bytes{dims})\n",
+                        upload.path, upload.size
+                    ));
+                }
+                if existing.uploads.len() > 100 {
+                    out.push_str(&format!(
+                        "- … and {} more; use `list_files`\n",
+                        existing.uploads.len() - 100
+                    ));
+                }
             }
             out.push_str("\n### Recent releases (newest first)\n\n");
             if existing.releases.is_empty() {
@@ -196,6 +229,12 @@ mod tests {
                     path: "index.html".into(),
                     size: 1200,
                 }],
+                uploads: vec![Upload {
+                    path: "uploads/logo.png".into(),
+                    size: 5000,
+                    width: Some(400),
+                    height: Some(120),
+                }],
                 releases: vec![Release {
                     id: 2,
                     site_id: 1,
@@ -208,6 +247,9 @@ mod tests {
             }),
         });
         assert!(prompt.contains("- `index.html` (1200 bytes)"));
+        assert!(prompt.contains(
+            "### Files the owner uploaded\n\n- `uploads/logo.png` (5000 bytes, 400×120 pixels)\n"
+        ));
         assert!(prompt.contains("- `abcdef01` by agent (live): \"Add trails\""));
         assert!(prompt.contains("### Available skills\n\n(none)"));
     }

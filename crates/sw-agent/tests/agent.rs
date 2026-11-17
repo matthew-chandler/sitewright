@@ -726,3 +726,53 @@ async fn skills_are_indexed_loaded_on_demand_and_user_skills_are_picked_up() {
     );
     assert!(results[4].1, "skill files are confined to the skill folder");
 }
+
+#[tokio::test]
+async fn the_agent_sees_uploads_but_cannot_change_them() {
+    let env = env(vec![
+        Turn::tools(&[
+            (
+                "write_file",
+                json!({"path": "uploads/logo.png", "content": "x"}),
+            ),
+            ("delete_file", json!({"path": "uploads/logo.png"})),
+            ("read_file", json!({"path": "uploads/menu.csv"})),
+        ]),
+        Turn::text("Done."),
+    ])
+    .await;
+    env.store
+        .create("cafe", "Cafe", Author::User)
+        .await
+        .unwrap();
+    env.store
+        .add_upload("cafe", "logo.png", b"png bytes".to_vec(), Author::User)
+        .await
+        .unwrap();
+    env.store
+        .add_upload("cafe", "menu.csv", b"dish,price\n".to_vec(), Author::User)
+        .await
+        .unwrap();
+
+    let run = env
+        .agent
+        .start(request("cafe", "use my logo", false))
+        .await
+        .unwrap();
+    let (_, events) = finish(&env.agent, &run).await;
+    let results = tool_results(&events);
+    assert!(results[0].1 && results[0].2.to_string().contains("owner uploaded"));
+    assert!(results[1].1 && results[1].2.to_string().contains("owner uploaded"));
+    assert!(!results[2].1, "text uploads can be read: {:?}", results[2]);
+    assert_eq!(
+        env.store
+            .read_file("cafe", "uploads/logo.png")
+            .await
+            .unwrap(),
+        b"png bytes"
+    );
+
+    let system = &env.provider.requests()[0].system;
+    assert!(system.contains("### Files the owner uploaded\n\n- `uploads/logo.png` (9 bytes)\n"));
+    assert!(!system.contains("### Files in the working tree\n\n- `uploads/"));
+}

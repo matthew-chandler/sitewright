@@ -406,6 +406,7 @@ async fn nothing_is_reachable_without_signing_in() {
         "/static/vendor/htmx.min.js",
         "/static/passkey.js",
         "/static/run.js",
+        "/static/upload.js",
     ] {
         assert_eq!(browser.get(path).await.status(), StatusCode::OK, "{path}");
     }
@@ -1053,6 +1054,131 @@ async fn providers_can_be_added_tested_and_removed_in_settings() {
             .unwrap()
             .key("mock")
             .is_none()
+    );
+    t.daemon.shutdown().await;
+}
+
+#[tokio::test]
+async fn owners_upload_files_from_the_site_page() {
+    let t = boot_with("").await;
+    let mut browser = Browser::new(&t);
+    let enrolled = browser.enroll(&SoftKey::new(), &invite(&t).await).await;
+    browser.adopt_session(&enrolled).await;
+    let dir = t.site_dir("shop-src", &[("index.html", PAGE)]);
+    t.cli(&["site", "import", "shop", common::path_str(&dir)])
+        .await
+        .unwrap();
+
+    let page = browser.get("/sites/shop").await.text().await.unwrap();
+    assert!(page.contains("Your files") && page.contains("id=\"upload-form\""));
+    assert!(page.contains("No files uploaded yet.") && page.contains("/static/upload.js"));
+    assert!(page.contains("accept=\".png,.jpg,"));
+
+    // A PNG header is enough for the dimensions.
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend_from_slice(&640u32.to_be_bytes());
+    png.extend_from_slice(&480u32.to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    let put = |name: &str, body: Vec<u8>| {
+        browser
+            .request(Method::PUT, &format!("/sites/shop/uploads?name={name}"))
+            .body(body)
+            .send()
+    };
+    let uploaded = put("Shop%20Logo.png", png.clone()).await.unwrap();
+    assert_eq!(uploaded.status(), StatusCode::OK);
+    let fragment = uploaded.text().await.unwrap();
+    assert!(fragment.starts_with("<div id=\"uploads\">"), "{fragment}");
+    assert!(fragment.contains("Uploaded uploads/shop-logo.png; it is live."));
+    assert!(
+        fragment.contains("640×480")
+            && fragment.contains("src=\"/sites/shop/uploads/shop-logo.png\"")
+    );
+    assert!(fragment.contains("data-insert=\"uploads/shop-logo.png\""));
+
+    // Live on the site at once, and in the release history.
+    let live = t.get(&host("shop"), "/uploads/shop-logo.png").await;
+    assert_eq!(live.status(), StatusCode::OK);
+    assert_eq!(live.bytes().await.unwrap().as_ref(), png.as_slice());
+    let page = browser.get("/sites/shop").await.text().await.unwrap();
+    assert!(page.contains("Upload uploads/shop-logo.png"));
+
+    // The portal preview is sandboxed, so an SVG cannot run script on the admin origin.
+    let preview = browser.get("/sites/shop/uploads/shop-logo.png").await;
+    assert_eq!(preview.headers()["content-type"], "image/png");
+    let csp = preview.headers()["content-security-policy"]
+        .to_str()
+        .unwrap();
+    assert!(
+        csp.contains("sandbox") && csp.starts_with("default-src 'none'"),
+        "{csp}"
+    );
+
+    // Pages and scripts cannot be uploaded; errors come back as text for upload.js.
+    let refused = put("evil.html", b"<script>".to_vec()).await.unwrap();
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(refused.text().await.unwrap().contains("cannot be uploaded"));
+    // Over the size limit.
+    let big = put("big.png", vec![0; 1024 * 1024 + 1]).await.unwrap();
+    assert!(big.status().is_client_error());
+    // Without the CSRF token.
+    let no_token = t
+        .http
+        .put(format!(
+            "http://{}/sites/shop/uploads?name=a.png",
+            t.daemon.addr
+        ))
+        .header("host", ADMIN)
+        .header(
+            "cookie",
+            format!("__Host-sw_session={}", browser.cookie.clone().unwrap()),
+        )
+        .body(png.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_token.status(), StatusCode::FORBIDDEN);
+
+    // The CLI and the API see the same files.
+    let notes = t.site_dir("notes", &[("Opening Hours.txt", "9 to 5")]);
+    t.cli(&[
+        "site",
+        "upload",
+        "shop",
+        common::path_str(&notes.join("Opening Hours.txt")),
+    ])
+    .await
+    .unwrap();
+    let uploads: Vec<Value> = t.admin().get("/v1/sites/shop/uploads").await.unwrap();
+    let paths: Vec<&str> = uploads
+        .iter()
+        .map(|u| u["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        paths,
+        ["uploads/opening-hours.txt", "uploads/shop-logo.png"]
+    );
+    assert_eq!(uploads[1]["width"], 640);
+    t.cli(&["site", "remove-upload", "shop", "uploads/opening-hours.txt"])
+        .await
+        .unwrap();
+
+    // Removing from the page.
+    let removed = browser
+        .form("/sites/shop/uploads/shop-logo.png/delete", &[])
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        removed.contains("Removed uploads/shop-logo.png.")
+            && removed.contains("No files uploaded yet.")
+    );
+    assert_eq!(
+        t.get(&host("shop"), "/uploads/shop-logo.png")
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
     );
     t.daemon.shutdown().await;
 }

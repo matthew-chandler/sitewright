@@ -144,3 +144,11 @@ summary { cursor: pointer; font-weight: 600; }
 .panel .sql { border: 0; padding: 0; margin-top: 0.5rem; background: none; }
 .panel .sql summary { font-weight: 400; font-size: 0.85rem; color: var(--muted); }
 .panel .sql pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; }
+
+/* Uploaded files on the site page. */
+.uploads > li { justify-content: flex-start; flex-wrap: nowrap; }
+.uploads .thumb { flex: none; width: 3rem; height: 3rem; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); }
+.uploads .file-type { display: grid; place-items: center; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+.uploads .upload-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.uploads .row { flex: none; }
+#upload-form input[type="file"] { max-width: 100%; }

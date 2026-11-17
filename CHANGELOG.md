@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-16
+
+### Added
+
+- Upload your own files for a site to use: on the site's page, **Your files** takes
+  images, fonts, PDFs, audio, video and text data. Files go into `uploads/` and are
+  published at once (or with the next publish, when an earlier run left unpublished
+  changes). Photos over the size limit, and HEIC photos, are made smaller in the browser
+  first. **Use** puts a file's path into the prompt box; **Remove** takes it off the site.
+- The agent sees the uploads, with image dimensions, and is told to use them; it cannot
+  change or delete them. The `create-site` and `edit-site` skills say how.
+- `sitewright site upload`, `site uploads` and `site remove-upload`, and the matching
+  `/api/v1/sites/<site>/uploads` endpoints.
+
 ## [1.9.1] - 2026-11-16
 
 ### Fixed

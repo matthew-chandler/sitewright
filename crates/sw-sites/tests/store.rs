@@ -744,3 +744,183 @@ async fn rename_moves_the_site_and_redirects_the_old_address() {
             .is_err()
     );
 }
+
+/// The release directory a hostname serves.
+fn live_root(env: &Env, host: &str) -> std::path::PathBuf {
+    env.store.routes().get(host).unwrap().root.clone()
+}
+
+/// A 3 by 2 pixel PNG.
+fn tiny_png() -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend_from_slice(&3u32.to_be_bytes());
+    png.extend_from_slice(&2u32.to_be_bytes());
+    png.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    png
+}
+
+#[tokio::test]
+async fn uploads_publish_at_once_when_nothing_else_is_pending() {
+    let env = env().await;
+    env.store
+        .create("shop", "Shop", Author::User)
+        .await
+        .unwrap();
+
+    // Before the first publish, an upload waits for it.
+    let outcome = env
+        .store
+        .add_upload("shop", "Our Logo.PNG", tiny_png(), Author::User)
+        .await
+        .unwrap();
+    assert_eq!(outcome.upload.path, "uploads/our-logo.png");
+    assert_eq!(
+        (outcome.upload.width, outcome.upload.height),
+        (Some(3), Some(2))
+    );
+    assert!(outcome.release.is_none());
+    assert!(outcome.pending.unwrap().contains("first publish"));
+
+    env.store
+        .write_file(
+            "shop",
+            "index.html",
+            b"<!doctype html><img src=\"uploads/our-logo.png\" alt=\"\">".to_vec(),
+        )
+        .await
+        .unwrap();
+    env.store
+        .publish("shop", "First", Author::Agent)
+        .await
+        .unwrap();
+    let live = live_root(&env, "shop.example.com");
+    assert!(live.join("uploads/our-logo.png").is_file());
+
+    // With the working tree clean, an upload is live at once.
+    let outcome = env
+        .store
+        .add_upload("shop", "menu.pdf", b"%PDF-1.4".to_vec(), Author::User)
+        .await
+        .unwrap();
+    let release = outcome.release.expect("published");
+    assert_eq!(release.message, "Upload uploads/menu.pdf");
+    assert_eq!(release.author, "user");
+    assert!(!outcome.replaced);
+    let live = live_root(&env, "shop.example.com");
+    assert_eq!(
+        std::fs::read(live.join("uploads/menu.pdf")).unwrap(),
+        b"%PDF-1.4"
+    );
+
+    // Same name again: replaced.
+    let outcome = env
+        .store
+        .add_upload("shop", "MENU.pdf", b"%PDF-1.7".to_vec(), Author::User)
+        .await
+        .unwrap();
+    assert!(outcome.replaced);
+    assert!(outcome.release.is_some());
+
+    let names: Vec<String> = env
+        .store
+        .list_uploads("shop")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|u| u.path)
+        .collect();
+    assert_eq!(names, ["uploads/menu.pdf", "uploads/our-logo.png"]);
+
+    // Removing a file a page uses is refused, and the file stays.
+    let err = env
+        .store
+        .remove_upload("shop", "our-logo.png", Author::User)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, SiteError::Validation { .. }), "{err}");
+    assert!(
+        env.data
+            .site_repo(&sw_core::SiteName::parse("shop").unwrap())
+            .join("uploads/our-logo.png")
+            .is_file()
+    );
+
+    // Removing an unused one goes live.
+    let outcome = env
+        .store
+        .remove_upload("shop", "uploads/menu.pdf", Author::User)
+        .await
+        .unwrap();
+    assert!(outcome.release.is_some());
+    let live = live_root(&env, "shop.example.com");
+    assert!(!live.join("uploads/menu.pdf").exists());
+    assert!(
+        env.store
+            .remove_upload("shop", "menu.pdf", Author::User)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn uploads_never_publish_unfinished_work() {
+    let env = env().await;
+    env.store
+        .create("blog", "Blog", Author::User)
+        .await
+        .unwrap();
+    env.store
+        .write_file("blog", "index.html", b"<!doctype html><p>v1".to_vec())
+        .await
+        .unwrap();
+    env.store
+        .publish("blog", "v1", Author::Agent)
+        .await
+        .unwrap();
+
+    // An agent run left an edit that was never published.
+    env.store
+        .write_file(
+            "blog",
+            "index.html",
+            b"<!doctype html><p>half done".to_vec(),
+        )
+        .await
+        .unwrap();
+    let outcome = env
+        .store
+        .add_upload(
+            "blog",
+            "photo.jpg",
+            b"not really a jpeg".to_vec(),
+            Author::User,
+        )
+        .await
+        .unwrap();
+    assert!(outcome.release.is_none());
+    assert!(outcome.pending.unwrap().contains("next publish"));
+    assert_eq!(outcome.upload.width, None);
+    assert_eq!(
+        live_index(&env, "blog.example.com").await.unwrap(),
+        "<!doctype html><p>v1"
+    );
+    assert_eq!(env.store.info("blog").await.unwrap().releases.len(), 1);
+
+    // Types that are pages or scripts cannot be uploaded, and size limits apply.
+    for name in ["evil.html", "x.js", "backend.mjs"] {
+        assert!(
+            env.store
+                .add_upload("blog", name, b"x".to_vec(), Author::User)
+                .await
+                .is_err(),
+            "{name}"
+        );
+    }
+    let big = vec![0u8; 1024 * 1024 + 1];
+    let err = env
+        .store
+        .add_upload("blog", "big.png", big, Author::User)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("limit"), "{err}");
+}

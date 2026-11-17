@@ -21,6 +21,9 @@ One minute later:     https://hikes.example.com
 
 - **Prompt to site.** The agent plans the pages, writes HTML and CSS, validates links and
   sizes, and publishes. Follow-up prompts edit the site.
+- **Your own files.** Upload logos, photos, PDFs and fonts from the site's page (photos
+  from a phone are resized in the browser) and tell the agent to use them. See
+  [Your own files](docs/uploads.md).
 - **Every release is a git commit.** One tap rolls back; history is never lost.
 - **Safe by construction.** The agent has no shell and no network access. It can only
   call tools that are confined to one site, and it cannot delete a site: it can only ask
@@ -87,6 +90,7 @@ Full instructions: [docs/install.md](docs/install.md).
 | [Providers](docs/providers.md) | Setting up each LLM provider |
 | [Skills](docs/skills.md) | Built-in skills and writing your own |
 | [Metrics](docs/metrics.md) | What is collected, privacy, dashboards |
+| [Your own files](docs/uploads.md) | Uploading images, documents and fonts for a site to use |
 | [Containers](docs/containers.md) | Packaging a site as an image that runs without Sitewright |
 | [Backends](docs/backends.md) | Server-side code and a database per site, and how they are sandboxed |
 | [Operations](docs/operations.md) | Backup, moving servers, updates, troubleshooting |

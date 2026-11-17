@@ -122,6 +122,74 @@ pub fn clean_site_path(input: &str, allowed_extensions: &[String]) -> Result<Pat
     Ok(clean)
 }
 
+/// The directory that holds files the owner uploaded from the portal. The agent may use
+/// them but not change them.
+pub const UPLOADS_DIR: &str = "uploads";
+/// File types the owner may upload: media, fonts, documents and data. Never pages or
+/// scripts, which the agent writes. Also subject to the configured allowlist.
+pub const UPLOAD_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "avif", "svg", "ico", "woff", "woff2", "ttf", "otf",
+    "pdf", "mp3", "mp4", "webm", "txt", "csv", "json", "md",
+];
+/// Longest file name an upload keeps, in bytes, extension included.
+const MAX_UPLOAD_NAME: usize = 80;
+
+/// Whether a site-relative path is inside the uploads directory.
+pub fn is_upload_path(path: &str) -> bool {
+    path.strip_prefix(UPLOADS_DIR)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Turn a file name from a person's device (`My Logo (final).PNG`) into the path the
+/// upload gets in the site (`uploads/my-logo-final.png`). Rejects types that cannot be
+/// uploaded.
+pub fn upload_path(file_name: &str, allowed_extensions: &[String]) -> Result<String> {
+    // Browsers send a bare name, but some include a path; keep only the last part.
+    let base = file_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(file_name)
+        .trim();
+    let (stem, extension) = match base.rsplit_once('.') {
+        Some((stem, ext)) if !ext.is_empty() => (stem, ext.to_ascii_lowercase()),
+        _ => {
+            return Err(SiteError::path(
+                file_name,
+                "the file needs an extension, such as .png or .pdf",
+            ));
+        }
+    };
+    if !UPLOAD_EXTENSIONS.contains(&extension.as_str()) || !allowed_extensions.contains(&extension)
+    {
+        let allowed: Vec<&str> = UPLOAD_EXTENSIONS
+            .iter()
+            .copied()
+            .filter(|e| allowed_extensions.iter().any(|a| a == e))
+            .collect();
+        return Err(SiteError::path(
+            file_name,
+            format!(
+                "files of type .{extension} cannot be uploaded; allowed: {}",
+                allowed.join(", ")
+            ),
+        ));
+    }
+
+    let mut clean = String::with_capacity(stem.len());
+    for c in stem.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            clean.push(c);
+        } else if !clean.ends_with('-') {
+            clean.push('-');
+        }
+    }
+    let budget = MAX_UPLOAD_NAME - extension.len() - 1;
+    clean.truncate(budget);
+    let clean = clean.trim_matches('-');
+    let clean = if clean.is_empty() { "file" } else { clean };
+    Ok(format!("{UPLOADS_DIR}/{clean}.{extension}"))
+}
+
 /// Join a cleaned relative path onto `root`, refusing to pass through a symlink.
 ///
 /// `root` must exist. Components of `rel` that do not exist yet are fine; any existing
@@ -242,6 +310,32 @@ mod tests {
             );
         }
         assert!(clean_rel_path(&format!("{}.html", "a".repeat(200)), &exts()).is_err());
+    }
+
+    #[test]
+    fn upload_names_are_cleaned() {
+        let allowed: Vec<String> = ["png", "jpg", "pdf", "html"].map(str::to_owned).to_vec();
+        let ok = |name: &str| upload_path(name, &allowed).unwrap();
+        assert_eq!(ok("My Logo (final).PNG"), "uploads/my-logo-final.png");
+        assert_eq!(ok("C:\\Users\\me\\photo_1.jpg"), "uploads/photo_1.jpg");
+        assert_eq!(ok("../../etc/x.pdf"), "uploads/x.pdf");
+        assert_eq!(ok("Café menu.pdf"), "uploads/caf-menu.pdf");
+        assert_eq!(ok("...png"), "uploads/file.png");
+        assert_eq!(ok(".hidden.png"), "uploads/hidden.png");
+        let long = ok(&format!("{}.png", "a".repeat(300)));
+        assert_eq!(long.len(), "uploads/".len() + MAX_UPLOAD_NAME);
+
+        // Pages and scripts are the agent's; unknown or unlisted types are refused.
+        for name in ["index.html", "x.js", "noext", "x.", "photo.heic", "doc.svg"] {
+            assert!(upload_path(name, &allowed).is_err(), "{name}");
+        }
+        // Every cleaned name passes the general path rules.
+        for name in ["My Logo (final).PNG", "Café menu.pdf", "...png"] {
+            assert!(clean_site_path(&ok(name), &allowed).is_ok(), "{name}");
+        }
+        assert!(is_upload_path("uploads/a.png"));
+        assert!(!is_upload_path("uploadsx/a.png"));
+        assert!(!is_upload_path("img/uploads/a.png"));
     }
 
     #[test]

@@ -75,6 +75,20 @@ pub fn commit_all(repo_dir: &Path, message: &str, author_name: &str) -> Result<C
     })
 }
 
+/// Whether the working tree holds exactly the files of commit `sha`: no edits, additions
+/// or deletions since. Stages the working tree as a side effect, which is harmless:
+/// [`commit_all`] stages everything anyway.
+pub fn worktree_matches(repo_dir: &Path, sha: &str) -> Result<bool> {
+    let repo = Repository::open(repo_dir)?;
+    let mut index = repo.index()?;
+    index.add_all(["*"], IndexAddOption::DEFAULT, None)?;
+    index.update_all(["*"], None)?;
+    index.write()?;
+    let tree_id = index.write_tree()?;
+    let commit = repo.find_commit(Oid::from_str(sha)?)?;
+    Ok(commit.tree_id() == tree_id)
+}
+
 /// Write the files of commit `sha` into `dest` (created if missing). Only regular files
 /// are written: a tree can never produce a symlink or anything executable.
 pub fn export_commit(repo_dir: &Path, sha: &str, dest: &Path) -> Result<()> {
