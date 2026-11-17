@@ -5,7 +5,39 @@ resume from this file.
 
 _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on main; waiting on the nginx block for the domain move)_
 
+## Picking this up in a new session
+
+Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier work.
+
+- Read `AGENTS.md` (rules and checks), then this file. `PLAN.md` is the original v1
+  brief and `docs/ROADMAP.md` the approved follow-up; both are finished except where
+  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0008).
+- `main` is at **1.9.1** and so is the dev VPS. The last published tag is **v1.6.0**;
+  1.7.0 to 1.9.1 are merged but untagged (Matthew publishes when he chooses).
+- How a change ships here: branch, the four checks in `AGENTS.md`, PR, wait for the
+  `ci-ok` check, squash-merge, `./scripts/deploy-dev.sh`. Never force-push; `gh` on
+  this machine is old (no `--branch` on `gh run`, no `--json jobs`).
+- The VPS is `ssh racknerd-dev`, user `devtest`, no sudo, 965 MB of memory. The CLI
+  there needs `--data-dir ~/sitewright-data`. The daemon's own log is
+  `journalctl --user -u sitewright`.
+- Open threads, most useful first:
+  1. **Copilot has never completed a model call against the real runtime.** Sign-in
+     reached GitHub and was fixed in 1.8.1 (unconfirmed since). Needs #7 below.
+  2. A CLI command panics with "Broken pipe" when its output is piped to `head`.
+  3. The ACME certificate test is flaky under load (it has two retries).
+- Things that surprised me and will surprise you:
+  - Adding a dependency can switch features on for the whole build. The Copilot SDK
+    turned on `serde_json`'s `preserve_order`; enabling `reqwest`'s gzip for backends
+    made every HTTP client decompress. Run the full suite, not one crate.
+  - `pkill -f sitewright` kills the shell that runs it. Use `pgrep -x sitewright`.
+  - A site's agent, when its backend `fetch` fails, may quietly move the call into
+    the browser, where CORS blocks it. Look at the backend error first.
+
 ## Needs from Matthew
+
+Note (2026-11-16): items 1 and 2 look done. Sites answer at `https://*.machandler.com`
+and Matthew has used the portal. I did not verify the nginx configuration myself, so
+the items are left below until he confirms.
 
 1. **Add the nginx block for `*.machandler.com` (needs sudo).** Everything else for the
    move to `*.machandler.com` and `sitewright.machandler.com` is done; this is the last
@@ -42,8 +74,8 @@ _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on m
    delete `/etc/nginx/sites-enabled/sitewright-dev` and reload nginx, and delete the
    `*.dev` and `sitewright-dev` DNS records.
 
-4. **Optional: publish a release.** `main` is at 1.7.0; 1.6.0 is published.
-   `git tag -a v1.7.0 -m "Sitewright 1.7.0" && git push origin v1.7.0` publishes it; the
+4. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
+   tag. `git tag -a v1.9.1 -m "Sitewright 1.9.1" && git push origin v1.9.1` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 5. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -204,6 +236,11 @@ _Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on m
     Checked here: the image's contents, and the site running from the image's unpacked
     filesystem. Checked in CI only: `docker load` and `docker run` (no Docker on this
     machine or the VPS).
+  - **After the roadmap** (2026-11-16): Copilot sign-in with a GitHub account instead
+    of a token (1.8.0, fixed in 1.8.1 after the first real attempt); a searchable
+    list of the account's Copilot models in Settings (1.9.0, not yet seen with a real
+    list); backend `fetch` decompresses gzip, deflate and Brotli, limit 4 MB (1.9.1,
+    confirmed on the VPS with the `nfl` site against ESPN).
   - **Other backend frameworks** (optional on the roadmap): not started. My advice is
     still to wait; say so if you want it built.
 
