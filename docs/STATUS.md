@@ -164,11 +164,11 @@ and checked on the VPS). The old `*.dev.machandler.com` names were removed from
 - The move to `*.machandler.com` is finished except for removing the old nginx file (Needs #1).
 - Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
   - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
-    Not tagged. Not yet checked on a phone (Needs #6).
-  - **1.3** (GitHub Copilot): built as version 1.8.0, provider kind `copilot`, marked
-    experimental. Tested against a scripted stand-in for GitHub's runtime, never the
-    real one (Needs #7). "Named models" needed no work: a provider entry already is a
-    named model with a picker in the prompt box.
+    Not tagged. Checked on a phone by Matthew (2026-11-17).
+  - **1.3** (GitHub Copilot): provider kind `copilot`, built in 1.8.0 and marked
+    experimental. Matthew installed it, signed in and checked it on the VPS
+    (2026-11-17). "Named models" needed no work: a provider entry already is a named
+    model with a picker in the prompt box.
   - **1.4** (backends: runtime and site database): merged as version 1.4.0. A site can
     have JavaScript under `backend/` answering `/api/`, with its own SQLite database;
     the agent has the `build-backend` skill and the `test_backend`, `backend_logs` and
