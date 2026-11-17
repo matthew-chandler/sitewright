@@ -684,6 +684,7 @@ impl Job {
         }
         let info = store.info(&self.site).await?;
         let files = store.list_files(&self.site).await?;
+        let uploads = store.list_uploads(&self.site).await?;
         Ok(SiteContext {
             skills: self.inner.skills.index(),
             name: self.site.clone(),
@@ -691,6 +692,7 @@ impl Job {
             existing: Some(ExistingSite {
                 title: info.site.title,
                 files,
+                uploads,
                 releases: info.releases,
                 current_release: info.site.current_release,
             }),

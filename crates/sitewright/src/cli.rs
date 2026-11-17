@@ -156,6 +156,17 @@ pub enum SiteCommand {
         #[arg(long, short)]
         message: Option<String>,
     },
+    /// Upload files (images, fonts, documents, data) for a site to use. They go into
+    /// `uploads/` and go live at once when the site has no unpublished changes.
+    Upload {
+        name: String,
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
+    /// List the files uploaded to a site.
+    Uploads { name: String },
+    /// Remove an uploaded file, such as `logo.png` or `uploads/logo.png`.
+    RemoveUpload { name: String, file: String },
     /// Switch a site back to an earlier release.
     Rollback {
         name: String,
@@ -548,6 +559,59 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
                 )
                 .await?;
             print_info(&info);
+        }
+        SiteCommand::Upload { name, files } => {
+            for path in &files {
+                let data = std::fs::read(path)
+                    .with_context(|| format!("cannot read {}", path.display()))?;
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let outcome: Value = client
+                    .put_bytes(
+                        &format!("/v1/sites/{name}/uploads"),
+                        &[("name", file_name.as_str())],
+                        data,
+                    )
+                    .await?;
+                let uploaded = str_of(&outcome["upload"]["path"]);
+                match outcome["pending"].as_str() {
+                    None => println!(
+                        "Uploaded {uploaded}; live in release {}.",
+                        short(str_of(&outcome["release"]["sha"]))
+                    ),
+                    Some(reason) => println!("Uploaded {uploaded}; not live yet: {reason}."),
+                }
+            }
+        }
+        SiteCommand::Uploads { name } => {
+            let uploads: Vec<Value> = client.get(&format!("/v1/sites/{name}/uploads")).await?;
+            if uploads.is_empty() {
+                println!("No files uploaded to {name}.");
+            }
+            for upload in &uploads {
+                let dims = match (upload["width"].as_u64(), upload["height"].as_u64()) {
+                    (Some(w), Some(h)) => format!("  {w}x{h}"),
+                    _ => String::new(),
+                };
+                println!(
+                    "{}  {} bytes{dims}",
+                    str_of(&upload["path"]),
+                    upload["size"]
+                );
+            }
+        }
+        SiteCommand::RemoveUpload { name, file } => {
+            let file = file.strip_prefix("uploads/").unwrap_or(&file);
+            let outcome: Value = client
+                .delete(&format!("/v1/sites/{name}/uploads/{file}"), &json!({}))
+                .await?;
+            let removed = str_of(&outcome["upload"]["path"]);
+            match outcome["pending"].as_str() {
+                None => println!("Removed {removed}."),
+                Some(reason) => println!("Removed {removed}; not live yet: {reason}."),
+            }
         }
         SiteCommand::Title { name, title } => {
             let _: Value = client

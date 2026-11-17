@@ -263,6 +263,17 @@ pub fn definitions() -> Vec<ToolDef> {
     ]
 }
 
+/// The owner's uploads are theirs: the agent may use them but never change them.
+fn refuse_upload_change(path: &str) -> Result<(), ToolOutcome> {
+    if sw_sites::confine::is_upload_path(path.trim_start_matches("./")) {
+        return Err(ToolOutcome::error(format!(
+            "{path} is in uploads/, which holds files the owner uploaded. You cannot change or \
+             delete them; reference them from your pages. Put files you write somewhere else."
+        )));
+    }
+    Ok(())
+}
+
 /// Run one tool call. Never panics and never returns an `Err`: every failure becomes an
 /// error result the model can read and react to.
 pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
@@ -349,12 +360,14 @@ pub async fn execute(ctx: &ToolContext, call: &ToolCall) -> ToolOutcome {
             }
             "write_file" => {
                 let path = required("path")?;
+                refuse_upload_change(path)?;
                 let content = required("content")?;
                 let entry = ctx.store.write_file(&ctx.site, path, content.as_bytes().to_vec()).await.map_err(fail)?;
                 ToolOutcome::ok(json!({ "written": entry.path, "bytes": entry.size }))
             }
             "delete_file" => {
                 let path = required("path")?;
+                refuse_upload_change(path)?;
                 ctx.store.delete_file(&ctx.site, path).await.map_err(fail)?;
                 ToolOutcome::ok(json!({ "deleted": path }))
             }

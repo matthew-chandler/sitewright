@@ -4,8 +4,10 @@
 use std::convert::Infallible;
 
 use askama::Template;
-use axum::extract::{Path, State};
-use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::handler::Handler;
+use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -21,8 +23,13 @@ use crate::api::run_event_stream;
 use crate::auth::Session;
 use crate::state::AppState;
 
-/// Routes that need a session. The guard in `admin.rs` enforces that.
-pub fn routes() -> Router<AppState> {
+/// Routes that need a session. The guard in `admin.rs` enforces that. `upload_limit` is
+/// the largest file an owner may upload, in bytes.
+pub fn routes(upload_limit: u64) -> Router<AppState> {
+    // Leave room for the request around the file; the store applies the exact limit.
+    let body_limit = usize::try_from(upload_limit)
+        .unwrap_or(usize::MAX)
+        .saturating_add(64 * 1024);
     Router::new()
         .route("/", get(home))
         .route("/new", get(new_page).post(new_submit))
@@ -31,6 +38,12 @@ pub fn routes() -> Router<AppState> {
         .route("/sites/{name}/rollback", post(site_rollback))
         .route("/sites/{name}/delete", post(site_delete))
         .route("/sites/{name}/rename", post(site_rename))
+        .route(
+            "/sites/{name}/uploads",
+            get(uploads_fragment).put(upload_put.layer(DefaultBodyLimit::max(body_limit))),
+        )
+        .route("/sites/{name}/uploads/{file}", get(upload_preview))
+        .route("/sites/{name}/uploads/{file}/delete", post(upload_delete))
         .route("/sites/{name}/secrets", post(secret_save))
         .route("/sites/{name}/secrets/{secret}/delete", post(secret_delete))
         .route("/sites/{name}/hosts", post(host_approve))
@@ -388,6 +401,7 @@ struct SitePage {
     providers: Vec<ProviderOption>,
     runs: Vec<RunRow>,
     releases: Vec<ReleaseRow>,
+    uploads: UploadsView,
 }
 
 #[derive(Template)]
@@ -603,6 +617,7 @@ async fn site_page(
     let Ok(info) = state.store.info(&name).await else {
         return not_found(chrome, "site");
     };
+    let name_for_uploads = name.clone();
     let mut releases = Vec::new();
     for release in info.releases.iter().take(15) {
         let changes = match state
@@ -697,7 +712,225 @@ async fn site_page(
         providers: provider_options(&state).await,
         runs,
         releases,
+        uploads: uploads_view(&state, &name_for_uploads, None).await,
     })
+}
+
+// ---------------------------------------------------------------------- uploads
+
+struct UploadRow {
+    /// The name inside `uploads/`.
+    file: String,
+    path: String,
+    size: String,
+    /// "1200×800", or empty when not an image.
+    dims: String,
+    is_image: bool,
+    /// The extension, shown in place of a thumbnail: "pdf".
+    ext: String,
+    /// The file is in the live release.
+    live: bool,
+    /// Its public address on the site.
+    url: String,
+}
+
+/// The site page's uploads section, also sent alone after a change.
+struct UploadsView {
+    items: Vec<UploadRow>,
+    /// A message about the last change; empty for none.
+    message: String,
+    error: bool,
+    /// For example "1.0 MB".
+    limit: String,
+    limit_bytes: u64,
+    /// The `accept` attribute of the file picker.
+    accept: String,
+}
+
+#[derive(Template)]
+#[template(path = "uploads.html")]
+struct UploadsFragment {
+    name: String,
+    uploads: UploadsView,
+}
+
+async fn uploads_view(
+    state: &AppState,
+    name: &str,
+    message: Option<(bool, String)>,
+) -> UploadsView {
+    let limits = &state.config.sites;
+    let site = state.store.get(name).await.ok();
+    let base = state
+        .store
+        .info(name)
+        .await
+        .map(|i| i.url)
+        .unwrap_or_default();
+    let live_root = site.as_ref().and_then(|site| {
+        state
+            .store
+            .routes()
+            .sites()
+            .iter()
+            .find(|route| route.site_id == site.id)
+            .map(|route| route.root.clone())
+    });
+    let items = state
+        .store
+        .list_uploads(name)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|u| UploadRow {
+            file: u.file_name().to_owned(),
+            dims: match (u.width, u.height) {
+                (Some(w), Some(h)) => format!("{w}×{h}"),
+                _ => String::new(),
+            },
+            ext: u.path.rsplit('.').next().unwrap_or_default().to_owned(),
+            is_image: matches!(
+                u.path.rsplit('.').next(),
+                Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg" | "ico")
+            ),
+            live: live_root
+                .as_ref()
+                .is_some_and(|root| root.join(&u.path).is_file()),
+            url: format!("{base}/{}", u.path),
+            size: human_bytes(u.size),
+            path: u.path,
+        })
+        .collect();
+    let accept = sw_sites::confine::UPLOAD_EXTENSIONS
+        .iter()
+        .filter(|e| limits.allowed_extensions.iter().any(|a| a == *e))
+        .map(|e| format!(".{e}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let (error, message) = message.unwrap_or_default();
+    UploadsView {
+        items,
+        message,
+        error,
+        limit: human_bytes(limits.max_file_bytes),
+        limit_bytes: limits.max_file_bytes,
+        accept,
+    }
+}
+
+async fn render_uploads(
+    state: &AppState,
+    name: String,
+    message: Option<(bool, String)>,
+) -> Response {
+    let uploads = uploads_view(state, &name, message).await;
+    render(UploadsFragment { name, uploads })
+}
+
+async fn uploads_fragment(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    if state.store.get(&name).await.is_err() {
+        return (StatusCode::NOT_FOUND, "no such site").into_response();
+    }
+    render_uploads(&state, name, None).await
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadQuery {
+    /// The file's name on the owner's device.
+    name: String,
+}
+
+/// Store one uploaded file. The body is the file itself, sent by `upload.js`. Answers
+/// with the refreshed uploads section, or an error message as plain text.
+async fn upload_put(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<UploadQuery>,
+    body: Bytes,
+) -> Response {
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "the file is empty").into_response();
+    }
+    match state
+        .store
+        .add_upload(&name, &query.name, body.to_vec(), Author::User)
+        .await
+    {
+        Ok(outcome) => {
+            let verb = if outcome.replaced {
+                "Replaced"
+            } else {
+                "Uploaded"
+            };
+            let path = &outcome.upload.path;
+            let message = match &outcome.pending {
+                None => format!(
+                    "{verb} {path}; it is live. Mention it in a prompt to use it, for example \"use {path} as the logo\"."
+                ),
+                Some(reason) => format!("{verb} {path}. Not live yet: {reason}."),
+            };
+            render_uploads(&state, name, Some((false, message))).await
+        }
+        Err(e) => {
+            let status = if e.is_user_error() {
+                StatusCode::BAD_REQUEST
+            } else {
+                tracing::error!(error = %e, "upload failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, e.to_string()).into_response()
+        }
+    }
+}
+
+async fn upload_delete(
+    State(state): State<AppState>,
+    Path((name, file)): Path<(String, String)>,
+) -> Response {
+    let message = match state.store.remove_upload(&name, &file, Author::User).await {
+        Ok(outcome) => match outcome.pending {
+            None => (false, format!("Removed {}.", outcome.upload.path)),
+            Some(reason) => (
+                false,
+                format!("Removed {}. Not live yet: {reason}.", outcome.upload.path),
+            ),
+        },
+        Err(sw_sites::SiteError::Validation { problems, .. }) => (
+            true,
+            format!(
+                "Kept uploads/{file}: the site would not pass its checks without it ({}). Ask the agent to stop using it first.",
+                problems.join("; ")
+            ),
+        ),
+        Err(e) => (true, e.to_string()),
+    };
+    render_uploads(&state, name, Some(message)).await
+}
+
+/// Show an uploaded file from the working tree, for thumbnails in the portal. The file
+/// is the owner's but may come from anywhere, so it is sandboxed: an SVG with a script
+/// in it cannot run on the admin origin.
+async fn upload_preview(
+    State(state): State<AppState>,
+    Path((name, file)): Path<(String, String)>,
+) -> Response {
+    let path = format!("{}/{file}", sw_sites::confine::UPLOADS_DIR);
+    let Ok(data) = state.store.read_file(&name, &path).await else {
+        return (StatusCode::NOT_FOUND, "no such file").into_response();
+    };
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    (
+        [
+            (header::CONTENT_TYPE, mime.essence_str().to_owned()),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox".to_owned(),
+            ),
+            (header::CACHE_CONTROL, "private, no-cache".to_owned()),
+        ],
+        data,
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]

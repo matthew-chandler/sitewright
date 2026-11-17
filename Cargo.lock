@@ -1899,6 +1899,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "imagesize"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3596,7 +3602,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "sitewright"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3906,7 +3912,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sw-agent"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3928,7 +3934,7 @@ dependencies = [
 
 [[package]]
 name = "sw-backend"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "argon2",
  "flate2",
@@ -3956,7 +3962,7 @@ dependencies = [
 
 [[package]]
 name = "sw-core"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "ipnet",
  "rustls",
@@ -3971,7 +3977,7 @@ dependencies = [
 
 [[package]]
 name = "sw-image"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "hex",
  "serde",
@@ -3984,7 +3990,7 @@ dependencies = [
 
 [[package]]
 name = "sw-llm"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4004,7 +4010,7 @@ dependencies = [
 
 [[package]]
 name = "sw-metrics"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "futures-util",
  "hex",
@@ -4026,13 +4032,14 @@ dependencies = [
 
 [[package]]
 name = "sw-sites"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "arc-swap",
  "flate2",
  "futures-util",
  "git2",
  "hex",
+ "imagesize",
  "rand",
  "reqwest",
  "scraper",
@@ -4048,7 +4055,7 @@ dependencies = [
 
 [[package]]
 name = "sw-tls"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "arc-swap",
  "axum",
@@ -4074,7 +4081,7 @@ dependencies = [
 
 [[package]]
 name = "sw-update"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "flate2",
  "hex",
@@ -4097,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "sw-web"
-version = "1.9.1"
+version = "1.10.0"
 dependencies = [
  "askama",
  "async-trait",

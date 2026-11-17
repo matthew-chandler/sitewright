@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-16 (v1.6.0 published; 1.7.0 with containerized sites on main; waiting on the nginx block for the domain move)_
+_Last updated: 2026-11-16 (1.10.0: owner uploads from the portal; v1.6.0 is the last published tag)_
 
 ## Picking this up in a new session
 
@@ -11,9 +11,9 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 - Read `AGENTS.md` (rules and checks), then this file. `PLAN.md` is the original v1
   brief and `docs/ROADMAP.md` the approved follow-up; both are finished except where
-  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0008).
-- `main` is at **1.9.1** and so is the dev VPS. The last published tag is **v1.6.0**;
-  1.7.0 to 1.9.1 are merged but untagged (Matthew publishes when he chooses).
+  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0009).
+- `main` is at **1.10.0**. The last published tag is **v1.6.0**; 1.7.0 to 1.10.0 are
+  merged but untagged (Matthew publishes when he chooses).
 - How a change ships here: branch, the four checks in `AGENTS.md`, PR, wait for the
   `ci-ok` check, squash-merge, `./scripts/deploy-dev.sh`. Never force-push; `gh` on
   this machine is old (no `--branch` on `gh run`, no `--json jobs`).
@@ -35,8 +35,8 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 ## Needs from Matthew
 
-1. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
-   tag. `git tag -a v1.9.1 -m "Sitewright 1.9.1" && git push origin v1.9.1` publishes it; the
+1. **Optional: publish a release.** `main` is at 1.10.0; 1.6.0 is the last published
+   tag. `git tag -a v1.10.0 -m "Sitewright 1.10.0" && git push origin v1.10.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
 2. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
@@ -182,6 +182,14 @@ site names.
     list of the account's Copilot models in Settings (1.9.0, not yet seen with a real
     list); backend `fetch` decompresses gzip, deflate and Brotli, limit 4 MB (1.9.1,
     confirmed on the VPS with the `nfl` site against ESPN).
+  - **Owner uploads** (your request of 2026-11-16): 1.10.0. "Your files" on a site's
+    page uploads images, fonts, PDFs, audio, video and text data into `uploads/`;
+    they publish at once unless unpublished agent edits are pending. Big photos and
+    HEIC are shrunk in the browser. The agent sees them (with image dimensions) and
+    cannot change them. Also `sitewright site upload|uploads|remove-upload` and
+    `/api/v1/sites/<site>/uploads`. See `docs/uploads.md`, ADR-0009. Server side is
+    covered by tests; the browser part (`upload.js`, the resizing) has not been tried
+    on a phone yet.
   - **Other backend frameworks** (optional on the roadmap): not started. My advice is
     still to wait; say so if you want it built.
 
@@ -293,3 +301,8 @@ delete, agent-requested delete, provider test.
      check that neither sees the other's notes.
   4. Add a secret (any name and value) and prompt: "What secrets and hosts can this
      site's backend use?" The answer should name the secret and never show its value.
+- Uploads (1.10.0), on a phone: on a site's page, under **Your files**, upload a photo
+  straight from the camera (it should arrive as a `.webp` or `.jpg` under 1 MB) and a
+  small PNG logo. Press **Use** on the logo, finish the prompt ("put this logo in the
+  header") and run it. Then **Remove** the logo: it should be refused while the header
+  uses it.

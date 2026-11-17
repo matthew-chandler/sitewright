@@ -20,5 +20,5 @@ pub use import::ImportFile;
 pub use routes::{Route, RouteTable};
 pub use store::{
     Author, FileEntry, Hostname, ImportReport, PublishOutcome, Release, ReleaseHooks, ReleasePlan,
-    Site, SiteInfo, SiteStatus, SiteStore,
+    Site, SiteInfo, SiteStatus, SiteStore, Upload, UploadOutcome,
 };

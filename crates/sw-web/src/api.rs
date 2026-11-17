@@ -14,7 +14,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use sw_agent::{Run, RunEvent, RunRequest};
 use sw_sites::{
-    Author, DomainCheck, ImportReport, PublishOutcome, Release, Site, SiteInfo, import,
+    Author, DomainCheck, ImportReport, PublishOutcome, Release, Site, SiteInfo, Upload,
+    UploadOutcome, import,
 };
 
 use crate::error::{ApiError, ApiResult};
@@ -24,6 +25,7 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     // An import uploads a whole site as one archive.
     let import_limit = state.config.sites.max_site_bytes as usize + 1024 * 1024;
+    let upload_limit = state.config.sites.max_file_bytes as usize + 64 * 1024;
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/sites", get(list_sites).post(create_site))
@@ -31,6 +33,16 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/sites/{name}/import",
             put(import_site).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/v1/sites/{name}/uploads",
+            get(list_uploads)
+                .put(add_upload)
+                .layer(DefaultBodyLimit::max(upload_limit)),
+        )
+        .route(
+            "/v1/sites/{name}/uploads/{file}",
+            axum::routing::delete(remove_upload),
         )
         .route("/v1/sites/{name}/publish", post(publish_site))
         .route("/v1/sites/{name}/rollback", post(rollback_site))
@@ -223,6 +235,50 @@ async fn import_site(
         state
             .store
             .import(&name, files, message, Author::User)
+            .await?,
+    ))
+}
+
+async fn list_uploads(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> ApiResult<Json<Vec<Upload>>> {
+    Ok(Json(state.store.list_uploads(&name).await?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadQuery {
+    /// The file's name; it is cleaned up and placed under `uploads/`.
+    name: String,
+}
+
+/// Upload one file, sent as the request body.
+async fn add_upload(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(q): Query<UploadQuery>,
+    body: Bytes,
+) -> ApiResult<Json<UploadOutcome>> {
+    if body.is_empty() {
+        return Err(ApiError::bad_request("the file is empty"));
+    }
+    Ok(Json(
+        state
+            .store
+            .add_upload(&name, &q.name, body.to_vec(), Author::User)
+            .await?,
+    ))
+}
+
+async fn remove_upload(
+    State(state): State<AppState>,
+    Path((name, file)): Path<(String, String)>,
+) -> ApiResult<Json<UploadOutcome>> {
+    Ok(Json(
+        state
+            .store
+            .remove_upload(&name, &file, Author::User)
             .await?,
     ))
 }

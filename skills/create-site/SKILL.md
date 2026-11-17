@@ -85,4 +85,6 @@ common page patterns (landing page, list plus detail pages, single-page profile)
 
 - Paths: letters, digits, `-`, `_`, `.`; forward slashes; a normal web extension.
 - 1 MB per file, 20 MB per site, about 2 MB per page including its assets.
-- You cannot fetch images or data from the web. Do not link to images you have not written.
+- You cannot fetch images or data from the web. The owner can upload their own files; when
+  there are any, they are listed in your instructions under `uploads/`, so use those.
+  Otherwise do not link to images you have not written.
