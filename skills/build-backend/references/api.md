@@ -140,7 +140,8 @@ res.status; res.headers.get("content-type");
 ```
 
 - `fetch` throws when the host is not approved for this site, the request times out
-  (8 seconds), the response is larger than 1 MB or is not text.
+  (8 seconds), the response is larger than 4 MB or is not text. Compressed responses
+  are decompressed before you see them.
 - Only `https://` URLs on the standard port, by host name. Redirects are returned to
   you (`res.status` 301/302 with a `location` header), not followed.
 - `backend_access` shows which hosts are approved and which secret names exist.

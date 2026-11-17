@@ -116,7 +116,11 @@ Rules for outbound calls:
 - A call has 8 seconds and the handler 10, so make one call per request, not a chain.
 - Check `res.ok` and handle failure: answer 502 with a short message rather than
   passing the other service's error text through.
-- Responses are text up to 1 MB. Redirects are not followed.
+- Responses are text up to 4 MB. Compressed responses (gzip, deflate, Brotli) are
+  decompressed for you; do not set `accept-encoding`. Redirects are not followed.
+- Never work around a failed `fetch` by calling the outside API from the page's own
+  JavaScript: most APIs do not allow other sites' pages to read them (CORS), so it
+  fails in the visitor's browser. Fix the backend call, or tell the owner what failed.
 - Do not call an outside service on every page view if the answer changes slowly: store
   it in the database with a timestamp and reuse it for a few minutes.
 - Visitors can reach your route as often as they like. If the outside service costs

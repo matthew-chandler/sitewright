@@ -51,6 +51,10 @@ pub async fn boot_with_listen(extra: &str, mode: &str, listen: &str) -> TestDaem
         .await
         .unwrap();
     let http = reqwest::Client::builder()
+        // Tests look at responses as sent, including their content-encoding.
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()

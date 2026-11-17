@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-11-16
+
+### Fixed
+
+- Backend `fetch` could not read compressed responses (gzip, deflate, Brotli) and
+  failed with "the response is not UTF-8 text". Many public APIs compress every
+  response. They are now decompressed, and the response limit is 4 MB after
+  decompression (was 1 MB).
+
 ## [1.9.0] - 2026-11-16
 
 ### Added
