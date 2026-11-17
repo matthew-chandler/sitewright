@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   the runtime's memory use. Not yet run against the real runtime; see ADR-0008 and
   `docs/providers.md`.
 
+- **Sign in to Copilot with your GitHub account** instead of creating a token: a
+  short code to enter at github.com, from Settings ("Sign in with GitHub") or
+  `sitewright copilot login`. `sitewright copilot logout` forgets it. A Copilot
+  provider without a key uses this sign-in.
+
 ### Changed
 
 - JSON shown to the agent keeps the order it was written in instead of being sorted

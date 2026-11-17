@@ -53,6 +53,10 @@ pub fn routes() -> Router<AppState> {
         .route("/settings/providers", post(provider_save))
         .route("/settings/providers/{id}/test", post(provider_test))
         .route("/settings/providers/{id}/delete", post(provider_delete))
+        .route("/settings/copilot", get(copilot_panel))
+        .route("/settings/copilot/login", post(copilot_login))
+        .route("/settings/copilot/account", post(copilot_account))
+        .route("/settings/copilot/logout", post(copilot_logout))
         .route("/settings/dns-check", post(dns_check))
         .route("/settings/passkeys/{id}/delete", post(passkey_delete))
         .route("/settings/tokens", post(token_create))
@@ -1325,6 +1329,100 @@ async fn provider_delete(State(state): State<AppState>, Path(id): Path<String>) 
         Ok(()) => hx_refresh(),
         Err(e) => error_fragment(e),
     }
+}
+
+/// The GitHub Copilot part of Settings: where the sign-in stands and what to do next.
+/// `note` is an extra line (the answer to "who is signed in?").
+fn copilot_fragment(note: Option<String>) -> Response {
+    use sw_llm::copilot::SignIn;
+    let installed = sw_llm::copilot::runtime_path().is_some_and(|p| p.is_file());
+    if !installed {
+        return Html(
+            "<p class=\"muted\">The Copilot runtime is not installed. On the server, run \
+             <code>sitewright copilot install</code>, then reload this page.</p>"
+                .to_owned(),
+        )
+        .into_response();
+    }
+    let button = |label: &str, path: &str, class: &str| {
+        format!(
+            "<button type=\"button\" class=\"{class}\" hx-post=\"{path}\" hx-target=\"#copilot\" \
+             hx-disabled-elt=\"this\" hx-indicator=\"this\">{label}</button>"
+        )
+    };
+    let sign_in = button("Sign in with GitHub", "/settings/copilot/login", "");
+    let who = button("Who is signed in?", "/settings/copilot/account", "");
+    let sign_out = button("Sign out", "/settings/copilot/logout", "danger");
+    let note = note
+        .map(|n| format!("<p class=\"msg\" role=\"status\">{}</p>", esc(&n)))
+        .unwrap_or_default();
+    let body = match sw_llm::copilot::sign_in_state() {
+        SignIn::Waiting {
+            user_code,
+            verification_uri,
+        } => {
+            let link = if verification_uri.starts_with("https://") {
+                esc(&verification_uri)
+            } else {
+                "https://github.com/login/device".into()
+            };
+            // Poll until the owner has entered the code.
+            format!(
+                "<div hx-get=\"/settings/copilot\" hx-trigger=\"every 3s\" hx-target=\"#copilot\">\
+                 <p>Open <a href=\"{link}\" target=\"_blank\" rel=\"noopener noreferrer\">{link}</a> \
+                 and enter this code:</p>\
+                 <p><strong class=\"code\" style=\"font-size:1.6rem;letter-spacing:.1em\">{}</strong></p>\
+                 <p class=\"muted\">Waiting for GitHub. This page updates by itself.</p></div>",
+                esc(&user_code)
+            )
+        }
+        SignIn::Done { login } => format!(
+            "<p class=\"msg ok\" role=\"status\">Signed in{}.</p>\
+             <p class=\"muted\">Now add a provider below with the kind \"GitHub Copilot\" and no key.</p>\
+             <div class=\"row\">{who}{sign_out}</div>",
+            login
+                .map(|l| format!(" as {}", esc(&l)))
+                .unwrap_or_default()
+        ),
+        SignIn::Failed { message } => format!(
+            "<p class=\"msg error\" role=\"alert\">Sign-in failed: {}</p><div class=\"row\">{sign_in}</div>",
+            esc(&message)
+        ),
+        SignIn::Idle => format!(
+            "<p class=\"muted\">Use the models of your GitHub Copilot subscription. You get a short \
+             code to enter at github.com; there is no token to create.</p>\
+             <div class=\"row\">{sign_in}{who}{sign_out}</div>"
+        ),
+    };
+    Html(format!("{note}{body}")).into_response()
+}
+
+async fn copilot_panel() -> Response {
+    copilot_fragment(None)
+}
+
+async fn copilot_login() -> Response {
+    match sw_llm::copilot::sign_in_start().await {
+        Ok(_) => copilot_fragment(None),
+        Err(e) => copilot_fragment(Some(format!("Could not start the sign-in: {e}"))),
+    }
+}
+
+async fn copilot_account() -> Response {
+    let note = match sw_llm::copilot::account().await {
+        Ok(Some(login)) => format!("Signed in as {login}."),
+        Ok(None) => "Nobody is signed in.".to_owned(),
+        Err(e) => format!("Could not ask the runtime: {e}"),
+    };
+    copilot_fragment(Some(note))
+}
+
+async fn copilot_logout() -> Response {
+    let note = match sw_llm::copilot::sign_out() {
+        Ok(()) => "Signed out. To also revoke access, remove the Copilot app under GitHub Settings, Applications.".to_owned(),
+        Err(e) => format!("Could not remove the stored sign-in: {e}"),
+    };
+    copilot_fragment(Some(note))
 }
 
 #[derive(Debug, Deserialize)]

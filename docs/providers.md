@@ -159,28 +159,43 @@ the runtime can do (shell, files, web). ADR-0008 has the details and the caveats
    sitewright copilot install
    ```
 
-2. Create a fine-grained personal access token on GitHub with the "Copilot Requests"
-   permission, then check that everything works. This lists the models your account
-   may use and prints how much memory the runtime needed:
+2. Sign in with your GitHub account. There is no token to create: you get a short
+   code to enter at github.com. Either in the portal (Settings, "GitHub Copilot",
+   "Sign in with GitHub") or on the server:
 
    ```sh
-   COPILOT_GITHUB_TOKEN=github_pat_... sitewright copilot check
+   sitewright copilot login
    ```
 
-3. Add the provider: in the portal under Settings, kind "GitHub Copilot", a model id
-   from the list, and the token as the key. Or in `config.toml`:
+   This is GitHub's own device sign-in, run by GitHub's runtime. Sitewright never sees
+   the credentials; the runtime keeps them under `<data_dir>/copilot/home`, which only
+   the service user can read. `sitewright copilot logout` (or "Sign out") removes them.
+
+3. Check that everything works. This lists the models your account may use and prints
+   how much memory the runtime needed:
+
+   ```sh
+   sitewright copilot check
+   ```
+
+4. Add the provider: in the portal under Settings, kind "GitHub Copilot", a model id
+   from the list, and no key. Or in `config.toml`:
 
    ```toml
    [[llm.providers]]
    id = "copilot"
    kind = "copilot"
    model = "gpt-5"
-   key_ref = "copilot"
    ```
+
+A token still works if you prefer one: a fine-grained personal access token with the
+"Copilot Requests" permission, as the provider's key (or in `COPILOT_GITHUB_TOKEN` for
+`copilot check`). A provider with a key ignores the stored sign-in.
 
 Notes:
 
-- Only one Copilot conversation runs at a time; a second waits.
+- Only one Copilot conversation runs at a time; a second waits. A sign-in that is
+  waiting for its code counts as one.
 - Cost is shown as $0. GitHub bills Copilot as premium requests, not per token.
 - The runtime's memory use is the open question on a small server. Run the check
   before relying on it.

@@ -67,9 +67,17 @@ daemon on its own.
 killed when the last conversation using it ends. A second conversation waits for the
 slot (two minutes, then an error).
 
-**The token is a provider key.** A fine-grained personal access token with the
-"Copilot Requests" permission, stored like any other provider key and passed to the
-runtime in an environment variable, never on the command line.
+**Sign-in is GitHub's device flow, run by the runtime** (added 2026-11-16 at Matthew's
+request). The runtime is GitHub's own client, so it can show a code to enter at
+github.com and store the resulting credentials itself, in its home directory under
+the owner-only data directory. Sitewright needs no OAuth client id of its own, borrows
+nobody else's, and never holds the credentials. A provider without a key uses that
+stored sign-in. Because a server has no keychain, Sitewright tells the runtime up front
+that it may keep the sign-in in its configuration file, and agrees once if it asks.
+
+**A token is still accepted** as the provider's key: a fine-grained personal access
+token with the "Copilot Requests" permission, passed to the runtime in an environment
+variable, never on the command line.
 
 ## Consequences
 
@@ -91,6 +99,9 @@ taken from the SDK's source and tests, not observed:
 - that `--server --stdio --auth-token-env` starts it as the SDK's own launcher does;
 - that the tool allowlist and `replace` system prompt behave as documented;
 - its memory use;
+- the sign-in: that a session can be opened before anyone is signed in, the wire form
+  of agreeing to file storage (`store_token_plaintext` in the runtime's config, and
+  the answer `yes`), and where the credentials end up;
 - any real model call.
 
 `sitewright copilot check` exercises all four and prints the memory numbers. Until it

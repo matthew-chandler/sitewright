@@ -285,7 +285,14 @@ async fn follow_run(browser: &Browser<'_>, id: &str) -> Vec<String> {
 async fn nothing_is_reachable_without_signing_in() {
     let t = boot_with("").await;
     let browser = Browser::new(&t);
-    for path in ["/", "/new", "/settings", "/sites/x", "/runs/1"] {
+    for path in [
+        "/",
+        "/new",
+        "/settings",
+        "/settings/copilot",
+        "/sites/x",
+        "/runs/1",
+    ] {
         let res = browser.get(path).await;
         assert_eq!(res.status(), StatusCode::SEE_OTHER, "{path}");
         assert_eq!(res.headers()["location"], "/login");
@@ -597,6 +604,11 @@ async fn passkey_enrollment_sign_in_csrf_and_sign_out() {
     // Settings: passkeys, API tokens.
     let settings = browser.get("/settings").await.text().await.unwrap();
     assert!(settings.contains("Test phone") && settings.contains("Add passkey"));
+    // GitHub Copilot: without its runtime, the panel says how to install it and offers
+    // no sign-in.
+    assert!(settings.contains("hx-get=\"/settings/copilot\""));
+    let copilot = browser.get("/settings/copilot").await.text().await.unwrap();
+    assert!(copilot.contains("sitewright copilot install") && !copilot.contains("Sign in"));
     assert!(
         !settings.contains("/settings/passkeys/1/delete"),
         "the only passkey cannot be removed"
