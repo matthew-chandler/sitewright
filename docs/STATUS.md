@@ -35,31 +35,19 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 ## Needs from Matthew
 
-1. **Remove the old dev nginx site (needs sudo).** The last piece of the clean-up
-   after the move to `*.machandler.com`. The old hostnames are already detached from
-   the sites and the DNS records are deleted, so nothing uses this file any more:
-
-   ```sh
-   sudo rm /etc/nginx/sites-enabled/sitewright-dev
-   sudo nginx -t && sudo systemctl reload nginx
-   ```
-
-   `/etc/nginx/sites-available/sitewright-dev` can go too, or stay as a record. Any
-   certificate certbot holds for the dev names will fail to renew now that the DNS
-   records are gone; `sudo certbot certificates` lists them and
-   `sudo certbot delete --cert-name <name>` removes one.
-
-2. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
+1. **Optional: publish a release.** `main` is at 1.9.1; 1.6.0 is the last published
    tag. `git tag -a v1.9.1 -m "Sitewright 1.9.1" && git push origin v1.9.1` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
-3. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
+2. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
    screenshots, `.claude/settings.json`.
 
 Done, confirmed by Matthew on 2026-11-17: the nginx block for `*.machandler.com`, the
 new passkey, the phone check of release 1.2, and GitHub Copilot (installed, signed in
-and checked on the VPS). The old `*.dev.machandler.com` names were removed from
-`hikes` and `smoke` the same day.
+and checked on the VPS). The clean-up after the move is finished too (2026-11-17):
+the old `*.dev.machandler.com` names are off `hikes` and `smoke`, Matthew removed the
+old nginx site and DNS records, and `dev` and `sitewright-dev` are no longer reserved
+site names.
 
 ## Milestones
 
@@ -161,7 +149,7 @@ and checked on the VPS). The old `*.dev.machandler.com` names were removed from
 
 ## In progress
 
-- The move to `*.machandler.com` is finished except for removing the old nginx file (Needs #1).
+- The move to `*.machandler.com` is finished.
 - Post-v1 work follows [ROADMAP.md](ROADMAP.md) (approved 2026-11-16).
   - **1.2** (portal polish, site rename): merged as version 1.2.0 and running on the VPS.
     Not tagged. Checked on a phone by Matthew (2026-11-17).

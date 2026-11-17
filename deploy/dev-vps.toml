@@ -13,6 +13,6 @@ zones = ["machandler.com"]
 admin_host = "sitewright.machandler.com"
 admin_url = "https://sitewright.machandler.com"
 # Subdomains of machandler.com that other services on this server already use.
-reserved_names = ["api", "cps", "erp", "fireworks", "league", "l", "population", "sun", "uuixd", "dev", "sitewright-dev"]
+reserved_names = ["api", "cps", "erp", "fireworks", "league", "l", "population", "sun", "uuixd"]
 # Cloudflare terminates TLS for *.machandler.com.
 public_scheme = "https"
