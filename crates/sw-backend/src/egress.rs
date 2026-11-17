@@ -19,7 +19,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// Largest response body handed to a backend.
-pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+pub const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// Largest request body a backend may send.
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 /// Longest one outbound request may take, connection included.
@@ -140,6 +140,8 @@ fn forbidden_request_header(name: &str) -> bool {
             | "content-length"
             | "connection"
             | "transfer-encoding"
+            // The daemon asks for compressed responses and decompresses them itself.
+            | "accept-encoding"
             | "upgrade"
             | "te"
             | "expect"
@@ -350,6 +352,57 @@ mod tests {
         ] {
             assert!(is_public(public.parse().unwrap()), "{public}");
         }
+    }
+
+    #[tokio::test]
+    async fn compressed_responses_are_decompressed_and_still_capped() {
+        use std::io::Write;
+        use wiremock::matchers::{header_regex, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gzip = |text: &[u8]| {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(text).expect("compress");
+            encoder.finish().expect("finish")
+        };
+        sw_core::crypto::install_default_provider();
+        let server = MockServer::start().await;
+        // Many APIs compress whatever the client asks for; the backend's own
+        // accept-encoding is dropped so the daemon stays in charge of decoding.
+        Mock::given(method("GET"))
+            .and(path("/scores"))
+            .and(header_regex("accept-encoding", "gzip"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_raw(gzip(br#"{"events":["caf\u00e9"]}"#), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        // A small download that unpacks to more than the limit.
+        Mock::given(method("GET"))
+            .and(path("/bomb"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_raw(gzip(&vec![b'a'; MAX_RESPONSE_BYTES + 1]), "text/plain"),
+            )
+            .mount(&server)
+            .await;
+
+        let egress = Egress::for_tests();
+        let get = |path: &str| FetchRequest {
+            url: format!("{}{path}", server.uri()),
+            method: "GET".into(),
+            headers: vec![("Accept-Encoding".into(), "identity".into())],
+            body: None,
+        };
+        let response = egress.fetch(get("/scores")).await.expect("fetch");
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, r#"{"events":["caf\u00e9"]}"#);
+        let error = egress.fetch(get("/bomb")).await.expect_err("too large");
+        assert!(error.contains("larger than"), "{error}");
     }
 
     #[tokio::test]

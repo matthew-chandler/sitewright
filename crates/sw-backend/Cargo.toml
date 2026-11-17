@@ -24,7 +24,7 @@ sw-llm.workspace = true
 getrandom = "0.4.3"
 rquickjs = { version = "0.14.0", features = ["loader"] }
 futures-util = "0.3.34"
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "gzip", "brotli", "deflate"] }
 libsqlite3-sys = ">=0.30.1, <0.38.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -41,6 +41,7 @@ rustix = { version = "1.1.6", features = ["process"] }
 seccompiler = "0.5.0"
 
 [dev-dependencies]
+flate2 = "1.1.11"
 futures-util = "0.3.34"
 wiremock = "0.6.5"
 tempfile = "3.27.0"

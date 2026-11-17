@@ -143,7 +143,7 @@ sitewright backend remove-host hikes api.open-meteo.com
 - Requests are HTTPS on port 443 to a host name. The daemon resolves the name itself,
   refuses loopback, private, link-local and other non-public addresses, and connects to
   the address it checked. Redirects are not followed. A request has 8 seconds and a
-  1 MB text response.
+  4 MB text response (after decompression; gzip, deflate and Brotli are handled for you).
 - Lists are per site: approving a host for one site does nothing for another.
 
 ## Publishing and rolling back

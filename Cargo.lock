@@ -3596,7 +3596,7 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "sitewright"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -3906,7 +3906,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sw-agent"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3928,9 +3928,10 @@ dependencies = [
 
 [[package]]
 name = "sw-backend"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "argon2",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "libc",
@@ -3955,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "sw-core"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "ipnet",
  "rustls",
@@ -3970,7 +3971,7 @@ dependencies = [
 
 [[package]]
 name = "sw-image"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "hex",
  "serde",
@@ -3983,7 +3984,7 @@ dependencies = [
 
 [[package]]
 name = "sw-llm"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4003,7 +4004,7 @@ dependencies = [
 
 [[package]]
 name = "sw-metrics"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "futures-util",
  "hex",
@@ -4025,7 +4026,7 @@ dependencies = [
 
 [[package]]
 name = "sw-sites"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "arc-swap",
  "flate2",
@@ -4047,7 +4048,7 @@ dependencies = [
 
 [[package]]
 name = "sw-tls"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "arc-swap",
  "axum",
@@ -4073,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "sw-update"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "flate2",
  "hex",
@@ -4096,7 +4097,7 @@ dependencies = [
 
 [[package]]
 name = "sw-web"
-version = "1.9.0"
+version = "1.9.1"
 dependencies = [
  "askama",
  "async-trait",
@@ -4460,12 +4461,17 @@ version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
+ "async-compression",
  "bitflags",
  "bytes",
+ "futures-core",
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
+ "tokio",
+ "tokio-util",
  "tower",
  "tower-layer",
  "tower-service",
