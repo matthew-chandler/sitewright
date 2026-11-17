@@ -1073,6 +1073,7 @@ async fn owners_upload_files_from_the_site_page() {
     assert!(page.contains("Your files") && page.contains("id=\"upload-form\""));
     assert!(page.contains("No files uploaded yet.") && page.contains("/static/upload.js"));
     assert!(page.contains("accept=\".png,.jpg,"));
+    assert!(page.contains("data-warn=\"15728640\"") && page.contains("no size limit"));
 
     // A PNG header is enough for the dimensions.
     let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
@@ -1118,9 +1119,83 @@ async fn owners_upload_files_from_the_site_page() {
     let refused = put("evil.html", b"<script>".to_vec()).await.unwrap();
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
     assert!(refused.text().await.unwrap().contains("cannot be uploaded"));
-    // Over the size limit.
-    let big = put("big.png", vec![0; 1024 * 1024 + 1]).await.unwrap();
-    assert!(big.status().is_client_error());
+    // No size limit: 20 MB goes through (the page asks for a confirmation above 15 MB).
+    let big = vec![9u8; 20 * 1024 * 1024];
+    let accepted = put("intro.mp4", big.clone()).await.unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    let live = t.get(&host("shop"), "/uploads/intro.mp4").await;
+    assert_eq!(live.bytes().await.unwrap().len(), big.len());
+    let removed = browser
+        .form("/sites/shop/uploads/intro.mp4/delete", &[])
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(removed.contains("Removed uploads/intro.mp4."));
+    // The browser sends files in parts, then asks for the file to be stored.
+    let id = "0123456789abcdef0123456789abcdef";
+    let part = |offset: usize, body: Vec<u8>| {
+        browser
+            .request(
+                Method::PUT,
+                &format!("/sites/shop/uploads/parts/{id}?offset={offset}"),
+            )
+            .body(body)
+            .send()
+    };
+    let first = part(0, vec![1u8; 3000]).await.unwrap();
+    assert_eq!(first.text().await.unwrap(), "3000");
+    // A part at the wrong offset is refused with the length the server has.
+    let wrong = part(10, vec![2u8; 10]).await.unwrap();
+    assert_eq!(wrong.status(), StatusCode::CONFLICT);
+    assert_eq!(wrong.text().await.unwrap(), "3000");
+    assert_eq!(
+        part(3000, vec![2u8; 500])
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "3500"
+    );
+    let bad_id = browser
+        .request(Method::PUT, "/sites/shop/uploads/parts/../x?offset=0")
+        .body(vec![1u8])
+        .send()
+        .await
+        .unwrap();
+    assert!(bad_id.status().is_client_error());
+    let stored = put(&format!("Clip.webm&upload={id}"), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(stored.status(), StatusCode::OK);
+    assert!(
+        stored
+            .text()
+            .await
+            .unwrap()
+            .contains("Uploaded uploads/clip.webm")
+    );
+    let live = t
+        .get(&host("shop"), "/uploads/clip.webm")
+        .await
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(live.len(), 3500);
+    assert_eq!((live[0], live[3499]), (1, 2));
+    // The parts were moved into the site, so the id is spent.
+    let again = put(&format!("again.webm&upload={id}"), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+    browser
+        .form("/sites/shop/uploads/clip.webm/delete", &[])
+        .await;
+
+    // An empty body is refused.
+    let empty = put("empty.png", Vec::new()).await.unwrap();
+    assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
     // Without the CSRF token.
     let no_token = t
         .http

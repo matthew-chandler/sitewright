@@ -16,6 +16,7 @@ pub mod site;
 pub mod socket;
 pub mod state;
 pub mod ui;
+pub mod upload;
 
 pub use dispatch::public_router;
 pub use state::AppState;

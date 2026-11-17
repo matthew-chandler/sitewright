@@ -39,7 +39,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sw.js", get(service_worker))
         // Everything below needs a session (or, under /api, an API token).
         .route("/logout", post(logout))
-        .merge(ui::routes(state.config.sites.max_file_bytes))
+        .merge(ui::routes())
         .nest_service("/api", api::router(state.clone()))
         .layer(middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)

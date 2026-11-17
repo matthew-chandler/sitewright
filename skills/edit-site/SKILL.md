@@ -49,7 +49,9 @@ nothing else.
 - **"Use my logo / photo / menu"**: the owner's uploads are listed in your instructions
   under `uploads/`. Link to them by path (`uploads/logo.png`, or `../uploads/logo.png` from
   a page in a subfolder), give images `width` and `height` from the listed dimensions, and
-  write `alt` text from the file name and the request. You cannot change these files. If
+  write `alt` text from the file name and the request. Uploads can be large: lazy-load
+  images below the first screen and give videos `preload="none"`. You cannot change
+  these files. If
   the file the user means is not listed, say they can upload it on the site's page.
 - **"Undo that" / "go back"**: call `rollback_site` with no arguments to return to the
   release before the current one. Do not try to reconstruct the old content by hand.

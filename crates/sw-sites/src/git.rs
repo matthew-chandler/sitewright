@@ -91,10 +91,29 @@ pub fn worktree_matches(repo_dir: &Path, sha: &str) -> Result<bool> {
 
 /// Write the files of commit `sha` into `dest` (created if missing). Only regular files
 /// are written: a tree can never produce a symlink or anything executable.
-pub fn export_commit(repo_dir: &Path, sha: &str, dest: &Path) -> Result<()> {
+///
+/// `previous` is an earlier export (its sha and directory). A file whose content is the
+/// same there is hard-linked instead of written again, so a large upload is stored once
+/// however many releases contain it. Only pass immutable directories (releases): a
+/// linked file must never be written in place.
+pub fn export_commit(
+    repo_dir: &Path,
+    sha: &str,
+    dest: &Path,
+    previous: Option<(&str, &Path)>,
+) -> Result<()> {
     let repo = Repository::open(repo_dir)?;
     let commit = repo.find_commit(Oid::from_str(sha)?)?;
     let tree = commit.tree()?;
+    let previous_tree = match previous {
+        Some((prev_sha, dir)) if dir.is_dir() => Oid::from_str(prev_sha)
+            .and_then(|oid| repo.find_commit(oid))
+            .and_then(|c| c.tree())
+            .ok()
+            .map(|t| (t, dir)),
+        _ => None,
+    };
+    let odb = repo.odb()?;
     std::fs::create_dir_all(dest)?;
 
     let mut failure: Option<SiteError> = None;
@@ -107,8 +126,18 @@ pub fn export_commit(repo_dir: &Path, sha: &str, dest: &Path) -> Result<()> {
             match entry.kind() {
                 Some(ObjectType::Tree) => std::fs::create_dir_all(dest.join(&rel))?,
                 Some(ObjectType::Blob) if entry.filemode() != 0o120000 => {
-                    let blob = repo.find_blob(entry.id())?;
-                    std::fs::write(dest.join(&rel), blob.content())?;
+                    let target = dest.join(&rel);
+                    if let Some((prev_tree, prev_dir)) = &previous_tree
+                        && prev_tree.get_path(&rel).is_ok_and(|e| e.id() == entry.id())
+                    {
+                        let source = prev_dir.join(&rel);
+                        let is_file = std::fs::symlink_metadata(&source)
+                            .is_ok_and(|m| m.file_type().is_file());
+                        if is_file && std::fs::hard_link(&source, &target).is_ok() {
+                            return Ok(());
+                        }
+                    }
+                    write_blob(&repo, &odb, entry.id(), &target)?;
                 }
                 _ => {}
             }
@@ -129,6 +158,20 @@ pub fn export_commit(repo_dir: &Path, sha: &str, dest: &Path) -> Result<()> {
     }
 }
 
+/// Write one blob to `target`, streaming it when the object store allows, so a large
+/// file is never held in memory whole.
+fn write_blob(repo: &Repository, odb: &git2::Odb<'_>, id: Oid, target: &Path) -> Result<()> {
+    match odb.reader(id) {
+        Ok((mut reader, _, _)) => {
+            let mut file = std::fs::File::create(target)?;
+            std::io::copy(&mut reader, &mut file)?;
+        }
+        // Packed objects cannot be streamed; they are small or rare here.
+        Err(_) => std::fs::write(target, repo.find_blob(id)?.content())?,
+    }
+    Ok(())
+}
+
 /// Make the working tree's files match commit `sha` without moving `HEAD`, so the next
 /// commit records "back to this content" on top of the existing history.
 pub fn restore_worktree(repo_dir: &Path, sha: &str) -> Result<()> {
@@ -143,7 +186,7 @@ pub fn restore_worktree(repo_dir: &Path, sha: &str) -> Result<()> {
             std::fs::remove_file(entry.path())?;
         }
     }
-    export_commit(repo_dir, sha, repo_dir)
+    export_commit(repo_dir, sha, repo_dir, None)
 }
 
 /// One changed file in a commit, relative to its first parent.
@@ -221,7 +264,7 @@ mod tests {
         assert_eq!(summary, ["D css/a.css", "M index.html", "A new.html"]);
 
         let out = dir.path().join("out");
-        export_commit(&repo, &first.sha, &out).unwrap();
+        export_commit(&repo, &first.sha, &out, None).unwrap();
         assert_eq!(
             std::fs::read_to_string(out.join("index.html")).unwrap(),
             "v1"
@@ -240,5 +283,37 @@ mod tests {
         let third = commit_all(&repo, "back to first", "user").unwrap();
         assert!(third.changed);
         assert_ne!(third.sha, first.sha);
+
+        // Exporting next to an earlier export links the files that did not change.
+        let linked = dir.path().join("linked");
+        export_commit(&repo, &second.sha, &linked, Some((&first.sha, &out))).unwrap();
+        let out2 = dir.path().join("out2");
+        export_commit(&repo, &third.sha, &out2, Some((&second.sha, &linked))).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        let ino = |p: &Path| std::fs::metadata(p).unwrap().ino();
+        // index.html changed between first and second, so it was written, not linked.
+        assert_ne!(
+            ino(&linked.join("index.html")),
+            ino(&out.join("index.html"))
+        );
+        // third has v1 again: differs from second, so written; css/a.css is new there.
+        assert_eq!(
+            std::fs::read_to_string(out2.join("index.html")).unwrap(),
+            "v1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(out2.join("css/a.css")).unwrap(),
+            "a"
+        );
+        let fourth_dir = dir.path().join("out3");
+        export_commit(&repo, &third.sha, &fourth_dir, Some((&third.sha, &out2))).unwrap();
+        assert_eq!(
+            ino(&fourth_dir.join("css/a.css")),
+            ino(&out2.join("css/a.css"))
+        );
+        assert_eq!(
+            ino(&fourth_dir.join("index.html")),
+            ino(&out2.join("index.html"))
+        );
     }
 }

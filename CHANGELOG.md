@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-17
+
+### Changed
+
+- Uploads have no size limit. Files over 15 MB ask for a confirmation first. The site
+  size limits and page weight budget no longer count uploads; a page made heavy by
+  uploads gets a warning that tells the agent to lazy-load.
+- The portal sends files in 8 MB parts with a progress percentage, so uploads work
+  behind proxies with request limits (Cloudflare: 100 MB) and survive a dropped
+  connection. Photos are no longer shrunk; HEIC is still converted for browsers.
+- Uploads are streamed to disk everywhere (portal, API, CLI) and never held in memory.
+  Release directories hard-link files that did not change, so a large upload is stored
+  once however many releases contain it. Exports stream files.
+- The nginx example and `scripts/vps-production.sh` lift `client_max_body_size` and
+  turn off request buffering.
+
 ## [1.10.0] - 2026-11-16
 
 ### Added

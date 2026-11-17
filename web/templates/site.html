@@ -34,8 +34,8 @@
 
 <section>
   <h2>Your files</h2>
-  <p class="muted">Upload images, logos, fonts, documents or data for this site. Each file goes into <code>uploads/</code> and goes live straight away; then name it in a prompt, for example "use uploads/logo.png in the header". Up to {{ uploads.limit }} per file; large photos are made smaller before they are sent.</p>
-  <form id="upload-form" data-url="/sites/{{ name }}/uploads" data-limit="{{ uploads.limit_bytes }}">
+  <p class="muted">Upload images, logos, fonts, documents or data for this site. Each file goes into <code>uploads/</code> and goes live straight away; then name it in a prompt, for example "use uploads/logo.png in the header". There is no size limit, but files over 15 MB make pages slow to load and you will be asked to confirm them.</p>
+  <form id="upload-form" data-url="/sites/{{ name }}/uploads" data-warn="{{ uploads.warn_bytes }}">
     <label for="upload-files" class="sr-only">Files to upload</label>
     <input id="upload-files" type="file" name="files" multiple required accept="{{ uploads.accept }}">
     <button type="submit">Upload</button>

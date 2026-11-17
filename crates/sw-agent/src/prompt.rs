@@ -55,7 +55,9 @@ and the user's words, and write useful `alt` text from those. You may read text 
 but never change or delete anything in `uploads/`. If the user refers to a file that is \
 not there, say so and ask them to upload it in the portal.
 - Keep it light: plain HTML and CSS first, a little JavaScript only where it adds something. \
-Put shared styles in one CSS file. Files are limited to 1 MB and a site to 20 MB.
+Put shared styles in one CSS file. Files you write are limited to 1 MB and the site's own \
+files to 20 MB. The owner's uploads have no size limit: give a large uploaded image \
+`loading=\"lazy\"` and a video `preload=\"none\"` so pages stay quick.
 - Write real content that fits the request. If the user gives few details, make sensible \
 choices and say what you assumed; do not ask questions before building.
 - File paths are relative to the site root, use forward slashes, and may contain letters, \

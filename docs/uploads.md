@@ -18,10 +18,16 @@ box.
 - **Types:** images (PNG, JPEG, GIF, WebP, AVIF, SVG, ICO), fonts (WOFF, WOFF2, TTF,
   OTF), PDF, MP3, MP4, WebM, and text data (TXT, CSV, JSON, Markdown). Not HTML or
   JavaScript: pages and scripts are the agent's.
-- **Size:** 1 MB per file and 20 MB per site by default (`[sites]` in the
-  configuration). Photos over the limit, and iPhone HEIC photos, are made smaller and
-  converted to WebP (or JPEG) by your browser before they are sent, so a picture straight
-  from a phone camera works.
+- **Size:** no limit. Files over 15 MB need a confirmation, because they make pages
+  slow to load, especially on phones. The browser sends files in 8 MB parts with
+  progress shown, so proxy request limits (nginx, Cloudflare's 100 MB) do not get in
+  the way, and a dropped connection only resends one part. Only the single-request API
+  is subject to a proxy's limit; the example nginx config lifts it. iPhone HEIC photos, which browsers cannot show, are converted to WebP (or
+  JPEG) before they are sent; everything else is stored exactly as uploaded.
+- **Disk:** an upload is stored in the site's working copy, its history and its
+  releases, so it takes about three times its size on disk (releases share one copy
+  between them).
+  History keeps every version, even after you remove or replace a file.
 - **Not live yet?** If an earlier run left changes that were never published, the upload
   waits for the next publish rather than putting half-finished work live. The page says
   so; the next prompt publishes it.
@@ -49,5 +55,5 @@ sitewright site remove-upload <site> logo.png
 ```
 
 The API has `GET /api/v1/sites/<site>/uploads`, `PUT /api/v1/sites/<site>/uploads?name=<file name>`
-with the file as the body, and `DELETE /api/v1/sites/<site>/uploads/<file>`. The CLI
-sends files as they are, without making photos smaller.
+with the file as the body (streamed to disk, no size limit), and
+`DELETE /api/v1/sites/<site>/uploads/<file>`. The CLI streams files as they are.

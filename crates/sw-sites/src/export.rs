@@ -118,13 +118,24 @@ pub fn build(
         add(format!("{site}/Dockerfile"), dockerfile().as_bytes())?;
         add(format!("{site}/README.md"), readme(site, short).as_bytes())?;
     }
+    drop(add);
+    // Site files are streamed: uploads can be large.
     for file in &files {
-        add(
+        let source = std::fs::File::open(release_dir.join(&file.rel))?;
+        let size = source.metadata()?.len();
+        let mut header = tar::Header::new_gnu();
+        header.set_size(size);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_cksum();
+        tar.append_data(
+            &mut header,
             format!("{site_prefix}{}", file.rel),
-            &std::fs::read(release_dir.join(&file.rel))?,
+            std::io::Read::take(source, size),
         )?;
     }
-    drop(add);
     tar.into_inner()?.finish()?.sync_all()?;
     std::fs::rename(&tmp, &path)?;
     let bytes = std::fs::metadata(&path)?.len();

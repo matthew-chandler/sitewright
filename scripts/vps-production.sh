@@ -140,7 +140,9 @@ $(printf '%s\n' "$1" | sed 's/^/    /')
         proxy_cache off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
-        client_max_body_size 25m;
+        # Owner uploads have no size limit; stream them through unbuffered.
+        client_max_body_size 0;
+        proxy_request_buffering off;
     }
 }
 EOF

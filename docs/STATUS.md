@@ -3,7 +3,7 @@
 Live progress log for the v1 build described in [PLAN.md](../PLAN.md). A fresh session can
 resume from this file.
 
-_Last updated: 2026-11-16 (1.10.0: owner uploads from the portal; v1.6.0 is the last published tag)_
+_Last updated: 2026-11-17 (1.11.0: uploads without a size limit; v1.6.0 is the last published tag)_
 
 ## Picking this up in a new session
 
@@ -11,9 +11,9 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 - Read `AGENTS.md` (rules and checks), then this file. `PLAN.md` is the original v1
   brief and `docs/ROADMAP.md` the approved follow-up; both are finished except where
-  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0009).
-- `main` is at **1.10.0**. The last published tag is **v1.6.0**; 1.7.0 to 1.10.0 are
-  merged but untagged (Matthew publishes when he chooses).
+  this file says otherwise. Decisions are in `docs/adr/` (0001 to 0010).
+- `main` is at **1.11.0**, and so is the dev VPS. The last published tag is **v1.6.0**;
+  1.7.0 to 1.11.0 are merged but untagged (Matthew publishes when he chooses).
 - How a change ships here: branch, the four checks in `AGENTS.md`, PR, wait for the
   `ci-ok` check, squash-merge, `./scripts/deploy-dev.sh`. Never force-push; `gh` on
   this machine is old (no `--branch` on `gh run`, no `--json jobs`).
@@ -35,11 +35,21 @@ Written 2026-11-16 for whoever continues, human or AI, with no memory of earlier
 
 ## Needs from Matthew
 
-1. **Optional: publish a release.** `main` is at 1.10.0; 1.6.0 is the last published
-   tag. `git tag -a v1.10.0 -m "Sitewright 1.10.0" && git push origin v1.10.0` publishes it; the
+1. **Optional: lift nginx's body limit for API uploads.** The portal sends uploads in
+   8 MB parts, so it works with the current `client_max_body_size 25m;` (line 33 of
+   `/etc/nginx/sites-available/sitewright`). Only uploads through the HTTPS API
+   (`PUT /api/v1/sites/<site>/uploads`) over 25 MB are refused by nginx. To lift it:
+
+   ```sh
+   sudo sed -i 's/client_max_body_size 25m;/client_max_body_size 0;\n        proxy_request_buffering off;/' /etc/nginx/sites-available/sitewright
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+2. **Optional: publish a release.** `main` is at 1.11.0; 1.6.0 is the last published
+   tag. `git tag -a v1.11.0 -m "Sitewright 1.11.0" && git push origin v1.11.0` publishes it; the
    VPS can then move from its local build to `sitewright update`.
 
-2. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
+3. Still open from before: an offline copy of `~/.config/sitewright-release/`, README
    screenshots, `.claude/settings.json`.
 
 Done, confirmed by Matthew on 2026-11-17: the nginx block for `*.machandler.com`, the
@@ -188,8 +198,10 @@ site names.
     HEIC are shrunk in the browser. The agent sees them (with image dimensions) and
     cannot change them. Also `sitewright site upload|uploads|remove-upload` and
     `/api/v1/sites/<site>/uploads`. See `docs/uploads.md`, ADR-0009. Server side is
-    covered by tests; the browser part (`upload.js`, the resizing) has not been tried
-    on a phone yet.
+    covered by tests; the browser part (`upload.js`) has not been tried on a phone yet.
+    1.11.0 (your request of 2026-11-17) removes the size limit: confirm popup over
+    15 MB, uploads sent in 8 MB parts with progress, streamed to disk, releases
+    hard-link unchanged files, no photo shrinking (HEIC still converted). ADR-0010.
   - **Other backend frameworks** (optional on the roadmap): not started. My advice is
     still to wait; say so if you want it built.
 
@@ -301,8 +313,9 @@ delete, agent-requested delete, provider test.
      check that neither sees the other's notes.
   4. Add a secret (any name and value) and prompt: "What secrets and hosts can this
      site's backend use?" The answer should name the secret and never show its value.
-- Uploads (1.10.0), on a phone: on a site's page, under **Your files**, upload a photo
-  straight from the camera (it should arrive as a `.webp` or `.jpg` under 1 MB) and a
-  small PNG logo. Press **Use** on the logo, finish the prompt ("put this logo in the
+- Uploads (1.11.0), on a phone: on a site's page, under **Your files**, upload a photo
+  straight from the camera (HEIC arrives as `.webp` or `.jpg`; others unchanged), a
+  video over 15 MB (a confirmation should pop up, then a percentage), and a small PNG
+  logo. Press **Use** on the logo, finish the prompt ("put this logo in the
   header") and run it. Then **Remove** the logo: it should be refused while the header
   uses it.

@@ -93,18 +93,24 @@ pub fn validate(root: &Path, limits: &SitesConfig) -> std::io::Result<Report> {
     for link in &symlinks {
         report.push(Severity::Error, link, "symbolic links are not allowed");
     }
-    if report.bytes > limits.max_site_bytes {
+    // The owner's uploads have no size limits; the limits are for what the agent writes.
+    let written: u64 = files
+        .iter()
+        .filter(|f| !confine::is_upload_path(&f.rel))
+        .map(|f| f.size)
+        .sum();
+    if written > limits.max_site_bytes {
         report.push(
             Severity::Error,
             "",
             format!(
-                "the site is {} bytes; the limit is {} bytes",
-                report.bytes, limits.max_site_bytes
+                "the site's files (not counting uploads/) are {written} bytes; the limit is {} bytes",
+                limits.max_site_bytes
             ),
         );
     }
     for file in &files {
-        if file.size > limits.max_file_bytes {
+        if file.size > limits.max_file_bytes && !confine::is_upload_path(&file.rel) {
             report.push(
                 Severity::Error,
                 &file.rel,
@@ -200,6 +206,8 @@ fn check_page(
 
     // Every local link and asset must resolve; everything a page loads counts to its weight.
     let mut weight = size;
+    // Uploads the page loads: never an error, since the owner chose them, but worth a warning.
+    let mut upload_weight: u64 = 0;
     let mut counted: BTreeSet<String> = BTreeSet::new();
     let references: &[(&str, &str, bool)] = &[
         ("a[href]", "href", false),
@@ -233,7 +241,11 @@ fn check_page(
                 Reference::Local(target) => match resolve(file, &target, paths) {
                     Some(found) => {
                         if *is_asset && counted.insert(found.clone()) {
-                            weight += size_of(&found);
+                            if confine::is_upload_path(&found) {
+                                upload_weight += size_of(&found);
+                            } else {
+                                weight += size_of(&found);
+                            }
                         }
                     }
                     None => report.push(
@@ -250,6 +262,15 @@ fn check_page(
             Severity::Error,
             file,
             format!("the page and its assets weigh {weight} bytes; the budget is {PAGE_WEIGHT_BUDGET} bytes"),
+        );
+    }
+    if weight + upload_weight > PAGE_WEIGHT_BUDGET && upload_weight > 0 {
+        report.push(
+            Severity::Warning,
+            file,
+            format!(
+                "the page loads {upload_weight} bytes of uploaded files; this is allowed, but give large images loading=\"lazy\" and videos preload=\"none\" so the page stays quick"
+            ),
         );
     }
 }
@@ -440,7 +461,9 @@ mod tests {
         let report = validate(dir.path(), &limits).unwrap();
         let errors = messages(&report, Severity::Error);
         assert!(
-            errors.iter().any(|e| e.contains("the site is 121 bytes")),
+            errors
+                .iter()
+                .any(|e| e.contains("(not counting uploads/) are 121 bytes")),
             "{errors:?}"
         );
         assert!(errors.iter().any(|e| e.starts_with("big.css: 60 bytes")));
@@ -462,6 +485,28 @@ mod tests {
         let errors = messages(&report, Severity::Error);
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].contains("budget"));
+
+        // The same weight from the owner's uploads is only a warning, and uploads are
+        // exempt from the per-file and per-site limits.
+        let uploads_page = page.replace("src=\"", "src=\"uploads/");
+        let dir = site(&[
+            ("index.html", &uploads_page),
+            ("uploads/a.png", &heavy),
+            ("uploads/b.png", &heavy),
+            ("uploads/c.png", &heavy),
+        ]);
+        let tight = SitesConfig {
+            max_file_bytes: 1000,
+            max_site_bytes: 2000,
+            ..SitesConfig::default()
+        };
+        let report = validate(dir.path(), &tight).unwrap();
+        assert!(report.ok(), "{:?}", messages(&report, Severity::Error));
+        let warnings = messages(&report, Severity::Warning);
+        assert!(
+            warnings.iter().any(|w| w.contains("loading=\"lazy\"")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

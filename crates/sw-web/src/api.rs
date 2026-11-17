@@ -25,7 +25,6 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     // An import uploads a whole site as one archive.
     let import_limit = state.config.sites.max_site_bytes as usize + 1024 * 1024;
-    let upload_limit = state.config.sites.max_file_bytes as usize + 64 * 1024;
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/sites", get(list_sites).post(create_site))
@@ -38,7 +37,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/sites/{name}/uploads",
             get(list_uploads)
                 .put(add_upload)
-                .layer(DefaultBodyLimit::max(upload_limit)),
+                .layer(DefaultBodyLimit::disable()),
         )
         .route(
             "/v1/sites/{name}/uploads/{file}",
@@ -253,20 +252,26 @@ struct UploadQuery {
     name: String,
 }
 
-/// Upload one file, sent as the request body.
+/// Upload one file, sent as the request body. There is no size limit; the body is
+/// streamed to disk.
 async fn add_upload(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(q): Query<UploadQuery>,
-    body: Bytes,
+    body: axum::body::Body,
 ) -> ApiResult<Json<UploadOutcome>> {
-    if body.is_empty() {
-        return Err(ApiError::bad_request("the file is empty"));
-    }
+    let staged = crate::upload::stage(&state.store, body)
+        .await
+        .map_err(|e| match e {
+            crate::upload::StageError::Disk(_) => {
+                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+            _ => ApiError::bad_request(e.to_string()),
+        })?;
     Ok(Json(
         state
             .store
-            .add_upload(&name, &q.name, body.to_vec(), Author::User)
+            .add_upload_file(&name, &q.name, staged, Author::User)
             .await?,
     ))
 }

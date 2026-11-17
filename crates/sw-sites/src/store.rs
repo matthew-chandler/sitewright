@@ -274,9 +274,10 @@ fn write_checked(
     }
     let (files, _) = confine::walk(repo)?;
     let rel_str = rel.to_string_lossy();
+    // The owner's uploads do not count against the site limit.
     let others: u64 = files
         .iter()
-        .filter(|f| f.rel != rel_str)
+        .filter(|f| f.rel != rel_str && !confine::is_upload_path(&f.rel))
         .map(|f| f.size)
         .sum();
     if others + size > limits.max_site_bytes {
@@ -320,6 +321,24 @@ fn remove_empty_dirs(root: &Path, removed: &Path) {
         }
         dir = d.parent();
     }
+}
+
+/// The most recently created release directory, if any. Blocking.
+fn newest_release_dir(releases: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(releases)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.len() == 40 && name.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
 }
 
 impl SiteStore {
@@ -970,10 +989,32 @@ impl SiteStore {
         .await
     }
 
+    /// A fresh path to receive an upload on, on the same filesystem as the sites, so it
+    /// can be moved into place without copying. Pass it to [`SiteStore::add_upload_file`].
+    pub fn upload_staging_path(&self) -> Result<PathBuf> {
+        let dir = self.inner.data.tmp_dir();
+        std::fs::create_dir_all(&dir)?;
+        let mut token = [0u8; 12];
+        rand::fill(&mut token);
+        Ok(dir.join(format!("upload-{}", hex::encode(token))))
+    }
+
+    /// The staging file for an upload sent in parts, named by the client's random `id`
+    /// (32 lowercase hex characters). Parts are appended to it; the finished file is
+    /// then passed to [`SiteStore::add_upload_file`]. Stale ones are purged after a day.
+    pub fn upload_part_path(&self, id: &str) -> Result<PathBuf> {
+        if id.len() != 32 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err(SiteError::Invalid(
+                "an upload id is 32 lowercase hex characters".into(),
+            ));
+        }
+        let dir = self.inner.data.tmp_dir();
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir.join(format!("part-{id}")))
+    }
+
     /// Store a file the owner uploaded under `uploads/`, named after `file_name`, and
-    /// publish it. It is published only when the working tree held exactly the live
-    /// release before, so an upload never puts unfinished work live; otherwise it waits
-    /// for the next publish. If the publish fails, the working tree is put back.
+    /// publish it. Uploads have no size limit. See [`SiteStore::add_upload_file`].
     pub async fn add_upload(
         &self,
         name: &str,
@@ -981,15 +1022,45 @@ impl SiteStore {
         data: Vec<u8>,
         author: Author,
     ) -> Result<UploadOutcome> {
-        let path = confine::upload_path(file_name, &self.inner.limits.allowed_extensions)?;
+        let staged = self.upload_staging_path()?;
+        {
+            let staged = staged.clone();
+            blocking(move || Ok(std::fs::write(staged, data)?)).await?;
+        }
+        self.add_upload_file(name, file_name, staged, author).await
+    }
+
+    /// Move the file at `staged` (from [`SiteStore::upload_staging_path`]) into the site
+    /// as `uploads/<cleaned file_name>` and publish it. It is published only when the
+    /// working tree held exactly the live release before, so an upload never puts
+    /// unfinished work live; otherwise it waits for the next publish. If the publish
+    /// fails, the working tree is put back. `staged` is consumed either way.
+    pub async fn add_upload_file(
+        &self,
+        name: &str,
+        file_name: &str,
+        staged: PathBuf,
+        author: Author,
+    ) -> Result<UploadOutcome> {
+        let path = match confine::upload_path(file_name, &self.inner.limits.allowed_extensions) {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = std::fs::remove_file(&staged);
+                return Err(e);
+            }
+        };
         let message = format!("Upload {path}");
-        self.change_upload(name, path, Some(data), &message, author)
-            .await
+        let outcome = self
+            .change_upload(name, path, Some(staged.clone()), &message, author)
+            .await;
+        // Moved into place on success; anything left over is ours to clean up.
+        let _ = std::fs::remove_file(&staged);
+        outcome
     }
 
     /// Remove an uploaded file, publishing the removal under the same rule as
-    /// [`SiteStore::add_upload`]. A page that still uses the file makes the publish fail,
-    /// and the file is then kept.
+    /// [`SiteStore::add_upload_file`]. A page that still uses the file makes the publish
+    /// fail, and the file is then kept.
     pub async fn remove_upload(
         &self,
         name: &str,
@@ -1005,11 +1076,14 @@ impl SiteStore {
         self.change_upload(name, path, None, &message, author).await
     }
 
+    /// Put `staged` at `path` (or remove `path` when `None`), then publish if the tree
+    /// was clean. The file that was there is set aside by renaming, never read, so large
+    /// files cost no memory.
     async fn change_upload(
         &self,
         name: &str,
         path: String,
-        data: Option<Vec<u8>>,
+        staged: Option<PathBuf>,
         message: &str,
         author: Author,
     ) -> Result<UploadOutcome> {
@@ -1022,94 +1096,115 @@ impl SiteStore {
             Some(id) => Some(self.release(id).await?.sha),
             None => None,
         };
+        let removing = staged.is_none();
+        let backup = self.upload_staging_path()?;
 
-        let removing = data.is_none();
-        let (clean, previous, upload) = {
+        let (clean, had_previous, upload) = {
             let repo = repo.clone();
             let rel = rel.clone();
-            let limits = self.inner.limits.clone();
             let path = path.clone();
+            let backup = backup.clone();
             blocking(move || {
                 let clean = match &live_sha {
                     Some(sha) => git::worktree_matches(&repo, sha)?,
                     None => false,
                 };
                 let full = confine::resolve_in(&repo, &rel)?;
-                let previous = match std::fs::read(&full) {
-                    Ok(bytes) => Some(bytes),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(e.into()),
-                };
-                let upload = match data {
-                    Some(data) => {
-                        let entry = write_checked(&repo, &rel, &path, &data, &limits)?;
-                        upload_entry(&repo, entry.path, entry.size)
+                if full.is_dir() {
+                    return Err(SiteError::path(&path, "a directory with this name exists"));
+                }
+                let had_previous = full.is_file();
+                if removing && !had_previous {
+                    return Err(SiteError::Invalid(format!("{path} does not exist")));
+                }
+                let old_size = std::fs::metadata(&full).map(|m| m.len()).unwrap_or(0);
+                let old_entry = upload_entry(&repo, path.clone(), old_size);
+                if had_previous {
+                    std::fs::rename(&full, &backup)?;
+                }
+                let upload = match staged {
+                    Some(staged) => {
+                        if let Some(parent) = full.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        let moved = std::fs::rename(&staged, &full);
+                        if let Err(e) = moved {
+                            if had_previous {
+                                let _ = std::fs::rename(&backup, &full);
+                            }
+                            return Err(e.into());
+                        }
+                        let size = std::fs::metadata(&full)?.len();
+                        upload_entry(&repo, path, size)
                     }
                     None => {
-                        let Some(old) = &previous else {
-                            return Err(SiteError::Invalid(format!("{path} does not exist")));
-                        };
-                        let upload = upload_entry(&repo, path.clone(), old.len() as u64);
-                        std::fs::remove_file(&full)?;
-                        upload
+                        remove_empty_dirs(&repo, &full);
+                        old_entry
                     }
                 };
-                if removing {
-                    remove_empty_dirs(&repo, &full);
-                }
-                Ok((clean, previous, upload))
+                Ok((clean, had_previous, upload))
             })
             .await?
         };
-        let replaced = !removing && previous.is_some();
+        let replaced = !removing && had_previous;
         self.audit(author, "site.upload", site.name.as_str(), Some(message))
             .await;
 
-        if !clean {
-            let pending = if site.current_release.is_none() {
-                "the site has not been published yet, so this goes live with its first publish"
-            } else {
-                "the site has changes that are not published yet, so this goes live with the next publish"
-            };
-            return Ok(UploadOutcome {
-                upload,
-                replaced,
-                release: None,
-                pending: Some(pending.to_owned()),
-            });
+        let published = if clean {
+            Some(self.publish_locked(&site, message, author).await)
+        } else {
+            None
+        };
+        let finish_rel = rel.clone();
+        let finish_repo = repo.clone();
+        let failed = matches!(published, Some(Err(_)));
+        // Undo on failure: restore the old file, or remove the new one. On success, drop
+        // the old file.
+        let undo = blocking(move || {
+            let full = confine::resolve_in(&finish_repo, &finish_rel)?;
+            if failed {
+                if !removing {
+                    std::fs::remove_file(&full)?;
+                }
+                if had_previous {
+                    if let Some(parent) = full.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::rename(&backup, &full)?;
+                } else {
+                    remove_empty_dirs(&finish_repo, &full);
+                }
+            } else if had_previous {
+                std::fs::remove_file(&backup)?;
+            }
+            Ok(())
+        })
+        .await;
+        if let Err(undo_error) = undo {
+            tracing::error!(site = %site.name, %undo_error, "could not finish an upload change");
         }
 
-        match self.publish_locked(&site, message, author).await {
-            Ok(outcome) => Ok(UploadOutcome {
+        match published {
+            None => {
+                let pending = if site.current_release.is_none() {
+                    "the site has not been published yet, so this goes live with its first publish"
+                } else {
+                    "the site has changes that are not published yet, so this goes live with the next publish"
+                };
+                Ok(UploadOutcome {
+                    upload,
+                    replaced,
+                    release: None,
+                    pending: Some(pending.to_owned()),
+                })
+            }
+            Some(Ok(outcome)) => Ok(UploadOutcome {
                 upload,
                 replaced,
                 release: Some(outcome.release),
                 pending: None,
             }),
-            Err(error) => {
-                // Put the file back the way it was, so the working tree matches what is live.
-                let restore = blocking(move || {
-                    let full = confine::resolve_in(&repo, &rel)?;
-                    match previous {
-                        Some(bytes) => {
-                            if let Some(parent) = full.parent() {
-                                std::fs::create_dir_all(parent)?;
-                            }
-                            std::fs::write(&full, bytes)?;
-                        }
-                        None => {
-                            std::fs::remove_file(&full)?;
-                            remove_empty_dirs(&repo, &full);
-                        }
-                    }
-                    Ok(())
-                })
-                .await;
-                if let Err(restore_error) = restore {
-                    tracing::error!(site = %site.name, %restore_error, "could not undo an upload change");
-                }
-                Err(error)
-            }
+            Some(Err(error)) => Err(error),
         }
     }
 
@@ -1527,6 +1622,22 @@ impl SiteStore {
     /// Permanently remove sites that were deleted more than `purge_after_days` ago.
     /// Returns the names of the purged sites.
     pub async fn purge_expired(&self) -> Result<Vec<String>> {
+        // Uploads abandoned midway (a dropped connection, a crash) leave staging files.
+        let tmp = self.inner.data.tmp_dir();
+        blocking(move || {
+            let day = std::time::Duration::from_secs(24 * 3600);
+            for entry in std::fs::read_dir(&tmp).into_iter().flatten().flatten() {
+                let stale = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > day));
+                if stale {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+            Ok(())
+        })
+        .await?;
         let cutoff = now_ms() - i64::from(self.inner.limits.purge_after_days) * MS_PER_DAY;
         let expired = sqlx::query!(
             r#"SELECT id as "id!", name FROM sites WHERE status = 'deleted' AND deleted_at <= ?1"#,
@@ -1607,8 +1718,18 @@ impl SiteStore {
             }
             std::fs::create_dir_all(&releases)?;
             let tmp = releases.join(format!(".tmp-{sha}-{}", now_ms()));
-            let exported = git::export_commit(&repo, &sha, &tmp)
-                .and_then(|()| Ok(std::fs::rename(&tmp, &dest)?));
+            // Files unchanged since the newest release are linked from it, not copied.
+            let newest = newest_release_dir(&releases);
+            let previous = newest
+                .as_ref()
+                .and_then(|dir| Some((dir.file_name()?.to_str()?.to_owned(), dir.clone())));
+            let exported = git::export_commit(
+                &repo,
+                &sha,
+                &tmp,
+                previous.as_ref().map(|(s, d)| (s.as_str(), d.as_path())),
+            )
+            .and_then(|()| Ok(std::fs::rename(&tmp, &dest)?));
             if exported.is_err() {
                 let _ = std::fs::remove_dir_all(&tmp);
             }
