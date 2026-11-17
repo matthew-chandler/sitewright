@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-16
+
+### Added
+
+- **GitHub Copilot as a provider (experimental).** A new provider kind, `copilot`, uses
+  the models of a GitHub Copilot subscription through GitHub's Copilot SDK and runtime.
+  `sitewright copilot install` downloads and verifies the runtime;
+  `sitewright copilot check` signs in, lists the models, makes a test call and reports
+  the runtime's memory use. Not yet run against the real runtime; see ADR-0008 and
+  `docs/providers.md`.
+
+### Changed
+
+- JSON shown to the agent keeps the order it was written in instead of being sorted
+  by key (a side effect of the Copilot SDK).
+
 ## [1.7.0] - 2026-11-16
 
 ### Added

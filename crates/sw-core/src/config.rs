@@ -319,6 +319,9 @@ pub enum ProviderKind {
     Anthropic,
     /// Google Gemini generateContent.
     Gemini,
+    /// GitHub Copilot through its runtime (`sitewright copilot install`). The key is a
+    /// GitHub token; `model` is a Copilot model id such as `gpt-5`.
+    Copilot,
 }
 
 impl ProviderKind {
@@ -327,6 +330,7 @@ impl ProviderKind {
             ProviderKind::OpenaiCompat => "openai_compat",
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Gemini => "gemini",
+            ProviderKind::Copilot => "copilot",
         }
     }
 }

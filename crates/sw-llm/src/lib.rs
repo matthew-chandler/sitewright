@@ -6,6 +6,7 @@
 //! underneath, only `reqwest`.
 
 pub mod anthropic;
+pub mod copilot;
 pub mod error;
 pub mod gemini;
 pub mod http;
@@ -163,6 +164,7 @@ pub fn build_provider(
         ProviderKind::OpenaiCompat => Ok(Arc::new(openai_compat::OpenAiCompat::new(config, key)?)),
         ProviderKind::Anthropic => Ok(Arc::new(anthropic::Anthropic::new(config, key)?)),
         ProviderKind::Gemini => Ok(Arc::new(gemini::Gemini::new(config, key)?)),
+        ProviderKind::Copilot => Ok(Arc::new(copilot::Copilot::new(config, key)?)),
     }
 }
 

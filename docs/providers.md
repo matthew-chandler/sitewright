@@ -9,6 +9,7 @@ never go in `config.toml`: they live in `secrets.toml` and are referred to by na
 | `openai_compat` | OpenAI, Azure OpenAI (v1 endpoint), OpenRouter, Groq, DeepSeek, Ollama, vLLM, LM Studio | available |
 | `anthropic` | Claude models (Messages API) | available |
 | `gemini` | Gemini models (generateContent) | available |
+| `copilot` | GitHub Copilot subscription models, through GitHub's runtime | experimental, see below |
 
 The agent needs reliable **tool calling** and **streaming**. Small local models are best
 effort: they often fail to build a whole site.
@@ -45,7 +46,7 @@ Secrets are re-read on every run, so a new key works without a restart.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `id` | required | Name used by `llm.default`, `--provider` and the UI. |
-| `kind` | required | `openai_compat`, `anthropic` or `gemini`. |
+| `kind` | required | `openai_compat`, `anthropic`, `gemini` or `copilot`. |
 | `base_url` | required for `openai_compat` | API base. `openai_compat` appends `/chat/completions`. For `anthropic` (default `https://api.anthropic.com`) and `gemini` (default `https://generativelanguage.googleapis.com`) set it only to use a gateway. |
 | `model` | required | Model name (Azure: deployment name). |
 | `auth` | `"bearer"` | `"bearer"` sends `Authorization: Bearer <key>`; `"api_key_header"` sends `api-key: <key>`. |
@@ -144,3 +145,44 @@ sitewright prompt --new hikes "a hiking log with my favorite Washington trails"
 sitewright prompt hikes "add a packing checklist to the home page"
 sitewright prompt --provider openrouter hikes "make the headings larger"
 ```
+
+## GitHub Copilot (experimental)
+
+Copilot is not a plain API. GitHub's supported route is its Copilot runtime, a separate
+program of about 210 MB that Sitewright starts for the length of a run and stops
+afterwards. Sitewright gives it its own prompt and tools and refuses everything else
+the runtime can do (shell, files, web). ADR-0008 has the details and the caveats.
+
+1. Install the runtime on the server (about 150 MB to download, checksum verified):
+
+   ```sh
+   sitewright copilot install
+   ```
+
+2. Create a fine-grained personal access token on GitHub with the "Copilot Requests"
+   permission, then check that everything works. This lists the models your account
+   may use and prints how much memory the runtime needed:
+
+   ```sh
+   COPILOT_GITHUB_TOKEN=github_pat_... sitewright copilot check
+   ```
+
+3. Add the provider: in the portal under Settings, kind "GitHub Copilot", a model id
+   from the list, and the token as the key. Or in `config.toml`:
+
+   ```toml
+   [[llm.providers]]
+   id = "copilot"
+   kind = "copilot"
+   model = "gpt-5"
+   key_ref = "copilot"
+   ```
+
+Notes:
+
+- Only one Copilot conversation runs at a time; a second waits.
+- Cost is shown as $0. GitHub bills Copilot as premium requests, not per token.
+- The runtime's memory use is the open question on a small server. Run the check
+  before relying on it.
+- `COPILOT_CLI_PATH` points Sitewright at a runtime somewhere else.
+- A containerized site cannot use a Copilot model.

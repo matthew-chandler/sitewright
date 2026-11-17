@@ -457,8 +457,8 @@ async fn the_agent_designs_a_dashboard_and_bad_specs_are_refused() {
         )
     };
     assert!(
-        !outcome(0).0 && outcome(0).1.contains("v_requests"),
-        "the schema describes the views"
+        !outcome(0).0 && outcome(0).1.contains("\"parameters\""),
+        "the schema is returned (the event stream shows only its start)"
     );
     assert!(
         !outcome(1).0 && outcome(1).1.contains("\"search\""),
@@ -662,7 +662,7 @@ async fn the_agent_charts_a_sites_own_data_read_only() {
         assert!(*is_error && content.contains(why), "result {i}: {content}");
     };
     assert!(
-        !results[0].0 && results[0].1.contains("\"source\""),
+        !results[0].0 && results[0].1.contains("\"sources\""),
         "the schema names the source field (the event stream shortens the rest): {:?}",
         results[0]
     );
