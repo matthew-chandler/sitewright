@@ -562,17 +562,15 @@ async fn site(loaded: &Loaded, command: SiteCommand) -> anyhow::Result<()> {
         }
         SiteCommand::Upload { name, files } => {
             for path in &files {
-                let data = std::fs::read(path)
-                    .with_context(|| format!("cannot read {}", path.display()))?;
                 let file_name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 let outcome: Value = client
-                    .put_bytes(
+                    .put_file(
                         &format!("/v1/sites/{name}/uploads"),
                         &[("name", file_name.as_str())],
-                        data,
+                        path,
                     )
                     .await?;
                 let uploaded = str_of(&outcome["upload"]["path"]);

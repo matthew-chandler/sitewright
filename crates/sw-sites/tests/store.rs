@@ -916,11 +916,65 @@ async fn uploads_never_publish_unfinished_work() {
             "{name}"
         );
     }
-    let big = vec![0u8; 1024 * 1024 + 1];
-    let err = env
-        .store
-        .add_upload("blog", "big.png", big, Author::User)
+}
+
+#[tokio::test]
+async fn uploads_have_no_size_limit_and_are_stored_once() {
+    // Tiny limits, to show that they do not apply to uploads.
+    let env = env_with(
+        "[domains]\nzones = [\"example.com\"]\n[sites]\nmax_file_bytes = 1000\nmax_site_bytes = 3000\n",
+    )
+    .await;
+    env.store
+        .create("film", "Film", Author::User)
         .await
-        .unwrap_err();
-    assert!(err.to_string().contains("limit"), "{err}");
+        .unwrap();
+    env.store
+        .write_file(
+            "film",
+            "index.html",
+            b"<!doctype html><video src=\"uploads/trailer.mp4\"></video>".to_vec(),
+        )
+        .await
+        .unwrap();
+    let big = vec![7u8; 5 * 1024 * 1024];
+    env.store
+        .add_upload("film", "trailer.mp4", big.clone(), Author::User)
+        .await
+        .unwrap();
+    env.store
+        .publish("film", "First", Author::Agent)
+        .await
+        .unwrap();
+    let first = live_root(&env, "film.example.com");
+    assert_eq!(
+        std::fs::read(first.join("uploads/trailer.mp4")).unwrap(),
+        big
+    );
+
+    // The agent's own files still have their limits, and uploads do not use them up.
+    env.store
+        .write_file("film", "about.html", vec![b'a'; 900])
+        .await
+        .unwrap();
+    assert!(
+        env.store
+            .write_file("film", "huge.html", vec![b'a'; 1001])
+            .await
+            .is_err()
+    );
+
+    // A second release holds the same video without a second copy on disk.
+    env.store
+        .publish("film", "Second", Author::Agent)
+        .await
+        .unwrap();
+    let second = live_root(&env, "film.example.com");
+    assert_ne!(first, second);
+    use std::os::unix::fs::MetadataExt;
+    let ino = |p: &std::path::Path| std::fs::metadata(p).unwrap().ino();
+    assert_eq!(
+        ino(&first.join("uploads/trailer.mp4")),
+        ino(&second.join("uploads/trailer.mp4"))
+    );
 }

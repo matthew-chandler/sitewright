@@ -102,4 +102,8 @@ impl DataDir {
     pub fn backups_dir(&self) -> PathBuf {
         self.root.join("backups")
     }
+    /// Scratch space on the same filesystem as the sites, for uploads in progress.
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.root.join("tmp")
+    }
 }

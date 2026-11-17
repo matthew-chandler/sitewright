@@ -1,6 +1,6 @@
 # ADR-0009: Owner uploads live in the site's git tree under `uploads/`
 
-- Status: accepted
+- Status: accepted; the size limit and in-browser shrinking were replaced by ADR-0010
 - Date: 2026-11-16
 
 ## Context

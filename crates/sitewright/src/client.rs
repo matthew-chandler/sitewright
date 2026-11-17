@@ -62,6 +62,21 @@ impl AdminClient {
             .await
     }
 
+    /// PUT a file from disk, streamed so that its size does not matter.
+    pub async fn put_file<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        file: &std::path::Path,
+    ) -> anyhow::Result<T> {
+        let source = tokio::fs::File::open(file)
+            .await
+            .with_context(|| format!("cannot read {}", file.display()))?;
+        let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(source));
+        self.finish(self.http.put(Self::url(path)).query(query).body(body))
+            .await
+    }
+
     /// GET a binary body (a file download).
     pub async fn get_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let response = self

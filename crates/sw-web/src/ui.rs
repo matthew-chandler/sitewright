@@ -4,13 +4,12 @@
 use std::convert::Infallible;
 
 use askama::Template;
-use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::handler::Handler;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Extension, Form, Router};
 use futures_util::Stream;
 use serde::Deserialize;
@@ -23,13 +22,8 @@ use crate::api::run_event_stream;
 use crate::auth::Session;
 use crate::state::AppState;
 
-/// Routes that need a session. The guard in `admin.rs` enforces that. `upload_limit` is
-/// the largest file an owner may upload, in bytes.
-pub fn routes(upload_limit: u64) -> Router<AppState> {
-    // Leave room for the request around the file; the store applies the exact limit.
-    let body_limit = usize::try_from(upload_limit)
-        .unwrap_or(usize::MAX)
-        .saturating_add(64 * 1024);
+/// Routes that need a session. The guard in `admin.rs` enforces that.
+pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(home))
         .route("/new", get(new_page).post(new_submit))
@@ -40,7 +34,11 @@ pub fn routes(upload_limit: u64) -> Router<AppState> {
         .route("/sites/{name}/rename", post(site_rename))
         .route(
             "/sites/{name}/uploads",
-            get(uploads_fragment).put(upload_put.layer(DefaultBodyLimit::max(body_limit))),
+            get(uploads_fragment).put(upload_put.layer(DefaultBodyLimit::disable())),
+        )
+        .route(
+            "/sites/{name}/uploads/parts/{id}",
+            put(upload_part.layer(DefaultBodyLimit::max(UPLOAD_PART_MAX))),
         )
         .route("/sites/{name}/uploads/{file}", get(upload_preview))
         .route("/sites/{name}/uploads/{file}/delete", post(upload_delete))
@@ -718,6 +716,13 @@ async fn site_page(
 
 // ---------------------------------------------------------------------- uploads
 
+/// Uploads have no size limit, but the browser asks for a confirmation above this.
+pub const UPLOAD_WARN_BYTES: u64 = 15 * 1024 * 1024;
+/// The largest part of a file `upload.js` sends in one request (it sends 8 MB), so no
+/// request comes near the limits of proxies (nginx's 25 MB in the examples, Cloudflare's
+/// 100 MB).
+const UPLOAD_PART_MAX: usize = 16 * 1024 * 1024;
+
 struct UploadRow {
     /// The name inside `uploads/`.
     file: String,
@@ -740,9 +745,8 @@ struct UploadsView {
     /// A message about the last change; empty for none.
     message: String,
     error: bool,
-    /// For example "1.0 MB".
-    limit: String,
-    limit_bytes: u64,
+    /// Files larger than this need a confirmation in the browser.
+    warn_bytes: u64,
     /// The `accept` attribute of the file picker.
     accept: String,
 }
@@ -812,8 +816,7 @@ async fn uploads_view(
         items,
         message,
         error,
-        limit: human_bytes(limits.max_file_bytes),
-        limit_bytes: limits.max_file_bytes,
+        warn_bytes: UPLOAD_WARN_BYTES,
         accept,
     }
 }
@@ -838,6 +841,39 @@ async fn uploads_fragment(State(state): State<AppState>, Path(name): Path<String
 struct UploadQuery {
     /// The file's name on the owner's device.
     name: String,
+    /// When set, the file was sent in parts under this id and the body is empty.
+    upload: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PartQuery {
+    offset: u64,
+}
+
+/// Receive one part of a file sent in parts by `upload.js`. Answers with the number of
+/// bytes received so far; on 409 the body is the length the server already has.
+async fn upload_part(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, String)>,
+    Query(query): Query<PartQuery>,
+    body: axum::body::Body,
+) -> Response {
+    if state.store.get(&name).await.is_err() {
+        return (StatusCode::NOT_FOUND, "no such site").into_response();
+    }
+    let path = match state.store.upload_part_path(&id) {
+        Ok(path) => path,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
+    match crate::upload::append_part(&path, query.offset, body).await {
+        Ok(len) => len.to_string().into_response(),
+        Err(Ok(len)) => (StatusCode::CONFLICT, len.to_string()).into_response(),
+        Err(Err(e @ crate::upload::StageError::Disk(_))) => {
+            tracing::error!(error = %e, "upload part could not be stored");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+        Err(Err(e)) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 /// Store one uploaded file. The body is the file itself, sent by `upload.js`. Answers
@@ -846,14 +882,31 @@ async fn upload_put(
     State(state): State<AppState>,
     Path(name): Path<String>,
     Query(query): Query<UploadQuery>,
-    body: Bytes,
+    body: axum::body::Body,
 ) -> Response {
-    if body.is_empty() {
-        return (StatusCode::BAD_REQUEST, "the file is empty").into_response();
+    if state.store.get(&name).await.is_err() {
+        return (StatusCode::NOT_FOUND, "no such site").into_response();
     }
+    let staged = match &query.upload {
+        // Sent in parts: the file is already on disk.
+        Some(id) => match state.store.upload_part_path(id) {
+            Ok(path) if std::fs::metadata(&path).is_ok_and(|m| m.len() > 0) => Ok(path),
+            Ok(_) => Err(crate::upload::StageError::Empty),
+            Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        },
+        None => crate::upload::stage(&state.store, body).await,
+    };
+    let staged = match staged {
+        Ok(staged) => staged,
+        Err(e @ crate::upload::StageError::Disk(_)) => {
+            tracing::error!(error = %e, "upload could not be stored");
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
     match state
         .store
-        .add_upload(&name, &query.name, body.to_vec(), Author::User)
+        .add_upload_file(&name, &query.name, staged, Author::User)
         .await
     {
         Ok(outcome) => {

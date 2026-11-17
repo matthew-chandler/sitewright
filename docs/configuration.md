@@ -50,8 +50,8 @@ Unknown keys are rejected, so a typo is an error rather than a silently ignored 
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `max_file_bytes` | `1048576` (1 MiB) | Largest single file in a site. |
-| `max_site_bytes` | `20971520` (20 MiB) | Largest total size of a site's files. |
+| `max_file_bytes` | `1048576` (1 MiB) | Largest single file in a site. Files the owner uploads (`uploads/`) are exempt. |
+| `max_site_bytes` | `20971520` (20 MiB) | Largest total size of a site's files, not counting `uploads/`. |
 | `keep_releases` | `10` | Release directories kept on disk per site. Older releases stay in git and can still be rolled back to. |
 | `purge_after_days` | `7` | How long a deleted site stays restorable. |
 | `allowed_extensions` | common web file types | File extensions a site may contain (lowercase, no dot). |
