@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO site_jobs (site_id, kind, name, status, run_at, attempts, max_attempts, created_at)\n               VALUES (?1, 'schedule', ?2, 'running', ?3, 1, 1, ?4) RETURNING id as \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9eccac47573d763363419fd1a2ef70de22eec464ec953c180ed5b2ec8bfc25fb"
+}

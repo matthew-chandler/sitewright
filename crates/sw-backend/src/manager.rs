@@ -15,7 +15,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::protocol::{FromWorker, MAX_FRAME_BYTES, RequestMsg, ResponseMsg, ToWorker};
+use crate::protocol::{
+    Declared, FromWorker, MAX_FRAME_BYTES, RequestMsg, ResponseMsg, TaskMsg, ToWorker,
+};
 
 /// How to start a worker process.
 #[derive(Debug, Clone)]
@@ -44,6 +46,10 @@ pub struct Limits {
     /// host calls (queries, outside requests, model calls), which `request_timeout`
     /// does not count.
     pub max_wall: Duration,
+    /// Longest a background task's handler may run (its own time, as for requests).
+    pub task_timeout: Duration,
+    /// Longest a background task may take in all, host calls included.
+    pub task_wall: Duration,
 }
 
 impl Default for Limits {
@@ -58,6 +64,8 @@ impl Default for Limits {
             max_workers: 8,
             queue_wait: Duration::from_secs(10),
             max_wall: Duration::from_secs(90),
+            task_timeout: Duration::from_secs(30),
+            task_wall: Duration::from_secs(300),
         }
     }
 }
@@ -73,6 +81,9 @@ pub struct Target {
     /// Drafts (an agent testing unpublished code) get their own worker, apart from the
     /// live one.
     pub draft: bool,
+    /// Background tasks (jobs and schedules) get their own worker too, so that a long
+    /// task never makes visitors wait.
+    pub background: bool,
 }
 
 /// What backends may ask the daemon to do. Implemented by the daemon; every call names
@@ -87,6 +98,9 @@ pub trait Host: Send + Sync + 'static {
 
     /// A line of console output from the backend.
     fn log(&self, target: &Target, level: &str, message: &str);
+
+    /// A worker for `target` started and its code declared these background tasks.
+    fn loaded(&self, _target: &Target, _tasks: &Declared) {}
 }
 
 /// An HTTP request for a backend.
@@ -123,6 +137,7 @@ pub enum BackendError {
 
 struct Worker {
     version: String,
+    tasks: Declared,
     /// Dropping the child kills it.
     _child: Child,
     stdin: ChildStdin,
@@ -161,11 +176,20 @@ struct Slot {
     order: AtomicU64,
 }
 
+/// Site id, draft, background.
+type SlotKey = (i64, bool, bool);
+
+/// How a worker finished a piece of work.
+enum Finished {
+    Response(ResponseMsg),
+    Task(Option<String>),
+}
+
 struct Inner {
     command: WorkerCommand,
     limits: Limits,
     host: Arc<dyn Host>,
-    slots: StdMutex<HashMap<(i64, bool), Arc<Slot>>>,
+    slots: StdMutex<HashMap<SlotKey, Arc<Slot>>>,
     started: Instant,
     uses: AtomicU64,
 }
@@ -207,7 +231,7 @@ impl Backends {
         u64::try_from(self.inner.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
-    fn slots(&self) -> std::sync::MutexGuard<'_, HashMap<(i64, bool), Arc<Slot>>> {
+    fn slots(&self) -> std::sync::MutexGuard<'_, HashMap<SlotKey, Arc<Slot>>> {
         self.inner.slots.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -226,13 +250,88 @@ impl Backends {
         if request.body.len() > limits.max_request_body {
             return Err(BackendError::TooLarge);
         }
+        let message = ToWorker::Request(RequestMsg {
+            method: request.method,
+            path: request.path,
+            query: request.query,
+            headers: request.headers,
+            body: request.body,
+            timeout_ms: u64::try_from(limits.request_timeout.as_millis()).unwrap_or(u64::MAX),
+        });
+        let finished = self
+            .exchange(
+                target,
+                files,
+                message,
+                limits.request_timeout,
+                limits.max_wall,
+                limits.queue_wait,
+            )
+            .await?;
+        match finished {
+            Finished::Response(response) if response.body.len() > limits.max_response_body => {
+                Err(BackendError::TooLarge)
+            }
+            Finished::Response(response) => Ok(response),
+            Finished::Task(_) => Err(BackendError::Crashed(
+                "unexpected message from the worker".into(),
+            )),
+        }
+    }
+
+    /// Run a background task (a queued job or a scheduled run) in the target's worker.
+    /// `Ok(Some(message))` means the task's own handler threw.
+    pub async fn run_task<F>(
+        &self,
+        target: &Target,
+        files: F,
+        mut task: TaskMsg,
+    ) -> Result<Option<String>, BackendError>
+    where
+        F: FnOnce() -> Result<BTreeMap<String, String>, String>,
+    {
+        let limits = &self.inner.limits;
+        task.timeout_ms = u64::try_from(limits.task_timeout.as_millis()).unwrap_or(u64::MAX);
+        // Tasks of one site run one after another; a task may wait for the one before.
+        let finished = self
+            .exchange(
+                target,
+                files,
+                ToWorker::Task(task),
+                limits.task_timeout,
+                limits.task_wall,
+                limits.task_wall,
+            )
+            .await?;
+        match finished {
+            Finished::Task(error) => Ok(error),
+            Finished::Response(_) => Err(BackendError::Crashed(
+                "unexpected message from the worker".into(),
+            )),
+        }
+    }
+
+    /// Hand one message to the target's worker, starting it if needed, and wait for
+    /// it to finish.
+    async fn exchange<F>(
+        &self,
+        target: &Target,
+        files: F,
+        message: ToWorker,
+        own_time: Duration,
+        wall: Duration,
+        queue_wait: Duration,
+    ) -> Result<Finished, BackendError>
+    where
+        F: FnOnce() -> Result<BTreeMap<String, String>, String>,
+    {
         let slot = self
             .slots()
-            .entry((target.site_id, target.draft))
+            .entry((target.site_id, target.draft, target.background))
             .or_default()
             .clone();
-        // One request at a time per site; the rest wait their turn, but not for ever.
-        let mut guard = tokio::time::timeout(limits.queue_wait, slot.worker.lock())
+        // One message at a time per worker; the rest wait their turn, but not for ever.
+        let mut guard = tokio::time::timeout(queue_wait, slot.worker.lock())
             .await
             .map_err(|_| BackendError::Busy)?;
         slot.last_used.store(self.now_ms(), Ordering::Relaxed);
@@ -247,34 +346,22 @@ impl Backends {
         if guard.is_none() {
             self.make_room(&slot);
             let files = files().map_err(BackendError::Load)?;
-            *guard = Some(self.start(target, files).await?);
+            let worker = self.start(target, files).await?;
+            self.inner.host.loaded(target, &worker.tasks);
+            *guard = Some(worker);
         }
         let worker = guard.as_mut().ok_or(BackendError::Busy)?;
 
-        let message = ToWorker::Request(RequestMsg {
-            method: request.method,
-            path: request.path,
-            query: request.query,
-            headers: request.headers,
-            body: request.body,
-            timeout_ms: u64::try_from(limits.request_timeout.as_millis()).unwrap_or(u64::MAX),
-        });
         // The worker enforces the handler's own time limit and does not count the time
         // it waits for host calls. Here: the same budget (plus a second, for a worker
         // that cannot enforce it), extended by the time host calls actually took, and
         // an overall ceiling.
-        let budget = limits.request_timeout + Duration::from_secs(1);
-        let outcome = tokio::time::timeout(
-            limits.max_wall,
-            self.converse(target, worker, message, budget),
-        )
-        .await;
+        let budget = own_time + Duration::from_secs(1);
+        let outcome =
+            tokio::time::timeout(wall, self.converse(target, worker, message, budget)).await;
         slot.last_used.store(self.now_ms(), Ordering::Relaxed);
         match outcome {
-            Ok(Ok(response)) if response.body.len() > limits.max_response_body => {
-                Err(BackendError::TooLarge)
-            }
-            Ok(Ok(response)) => Ok(response),
+            Ok(Ok(finished)) => Ok(finished),
             Ok(Err((error, keep))) => {
                 if !keep {
                     *guard = None;
@@ -296,7 +383,7 @@ impl Backends {
         worker: &mut Worker,
         message: ToWorker,
         budget: Duration,
-    ) -> Result<BackendResponse, (BackendError, bool)> {
+    ) -> Result<Finished, (BackendError, bool)> {
         let crashed = |e: std::io::Error| (BackendError::Crashed(e.to_string()), false);
         worker.send(&message).await.map_err(crashed)?;
         let mut deadline = tokio::time::Instant::now() + budget;
@@ -305,7 +392,8 @@ impl Backends {
                 .await
                 .map_err(|_| (BackendError::Timeout, false))?;
             match frame.map_err(crashed)? {
-                FromWorker::Response(response) => return Ok(response),
+                FromWorker::Response(response) => return Ok(Finished::Response(response)),
+                FromWorker::TaskDone { error } => return Ok(Finished::Task(error)),
                 FromWorker::Failed { message, fatal } => {
                     let error = if message.contains("took too long") {
                         BackendError::Timeout
@@ -333,7 +421,7 @@ impl Backends {
                     };
                     worker.send(&reply).await.map_err(crashed)?;
                 }
-                FromWorker::Ready => {
+                FromWorker::Ready { .. } => {
                     return Err((
                         BackendError::Crashed("unexpected message from the worker".into()),
                         false,
@@ -343,13 +431,14 @@ impl Backends {
         }
     }
 
-    /// Check that a backend's code loads, in a worker that is then discarded.
+    /// Check that a backend's code loads, in a worker that is then discarded, and
+    /// return the background tasks it declares.
     pub async fn check(
         &self,
         target: &Target,
         files: BTreeMap<String, String>,
-    ) -> Result<(), BackendError> {
-        self.start(target, files).await.map(|_| ())
+    ) -> Result<Declared, BackendError> {
+        self.start(target, files).await.map(|w| w.tasks)
     }
 
     /// Start a worker and load the backend into it.
@@ -375,6 +464,7 @@ impl Backends {
         };
         let mut worker = Worker {
             version: target.version.clone(),
+            tasks: Declared::default(),
             _child: child,
             stdin,
             stdout: BufReader::new(stdout),
@@ -391,7 +481,10 @@ impl Backends {
                 .map_err(|e| BackendError::Spawn(e.to_string()))?;
             loop {
                 match worker.receive().await {
-                    Ok(FromWorker::Ready) => return Ok(()),
+                    Ok(FromWorker::Ready { tasks }) => {
+                        worker.tasks = tasks;
+                        return Ok(());
+                    }
                     Ok(FromWorker::Failed { message, .. }) => {
                         return Err(BackendError::Load(message));
                     }
@@ -412,7 +505,7 @@ impl Backends {
                             .await
                             .map_err(|e| BackendError::Crashed(e.to_string()))?;
                     }
-                    Ok(FromWorker::Response(_)) => {
+                    Ok(FromWorker::Response(_) | FromWorker::TaskDone { .. }) => {
                         return Err(BackendError::Crashed(
                             "unexpected message from the worker".into(),
                         ));
@@ -489,7 +582,7 @@ impl Backends {
         let slots: Vec<Arc<Slot>> = self
             .slots()
             .iter()
-            .filter(|((id, _), _)| *id == site_id)
+            .filter(|((id, _, _), _)| *id == site_id)
             .map(|(_, slot)| slot.clone())
             .collect();
         for slot in slots {
@@ -530,6 +623,7 @@ pub async fn self_test(command: WorkerCommand) -> Result<(), BackendError> {
         site: "self-test".into(),
         version: "self-test".into(),
         draft: true,
+        background: false,
     };
     let files = BTreeMap::from([(
         crate::worker::ENTRY.to_owned(),

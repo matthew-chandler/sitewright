@@ -146,6 +146,59 @@ res.status; res.headers.get("content-type");
   you (`res.status` 301/302 with a `location` header), not followed.
 - `backend_access` shows which hosts are approved and which secret names exist.
 
+## Background jobs and schedules
+
+```js
+import { Router, json, db, jobs, llm } from "sitewright";
+
+// Declare at the top level of a module (never inside a handler).
+jobs.define("summarize", async (payload, info) => {
+  // payload: what enqueue was given. info: { name, id, attempt, attempts }
+  const post = await db.get("select body from posts where id = ?", payload.postId);
+  const { text } = await llm.chat({ model: MODEL, system: "Summarize in one sentence.", messages: [{ role: "user", content: post.body }] });
+  await db.run("update posts set summary = ? where id = ?", text, payload.postId);
+});
+
+jobs.schedule("nightly-cleanup", "0 3 * * *", async (info) => {
+  // info: { name, id, scheduledAt }
+  await db.run("delete from sessions_seen where created_at < ?", Date.now() - 30 * 86400000);
+});
+
+// In a handler (or in another job): queue one and answer at once.
+app.post("/api/posts", async (req) => {
+  const { lastInsertRowid } = await db.run("insert into posts (body) values (?)", body);
+  await jobs.enqueue("summarize", { postId: lastInsertRowid });   // → { id }
+  return json({ id: lastInsertRowid }, 201);
+});
+```
+
+- **Same access as handlers.** Jobs and schedules use the same `db`, `secrets`,
+  `fetch` (approved hosts only) and `llm` (if the owner turned it on, within the
+  site's limits). There is no request: no `req`, no visitor, no `auth.user(req)`.
+- **They run in their own worker**, so a slow job never makes visitors wait. Jobs and
+  scheduled runs of one site run one at a time, in order.
+- **Time limits:** 30 seconds of the job's own work; waiting for the database, `fetch`
+  or a model does not count. Five minutes in all.
+- `jobs.enqueue(name, payload, { delaySeconds, attempts })`: `payload` is any JSON value
+  up to 64 KB (store big data in the database and pass its id); `delaySeconds` up to
+  30 days (default 0); `attempts` 1 to 10 (default 3). Throws if no job of that name
+  is declared.
+- **A job fails when its handler throws.** It is retried after 30 s, 2 min, 8 min, ...
+  until `attempts` are used up. Make jobs safe to run twice (check before inserting).
+- **Cron, in UTC:** five fields, minute hour day-of-month month day-of-week.
+  `*/15 * * * *` every 15 minutes, `0 * * * *` hourly, `0 6 * * *` 06:00 daily,
+  `0 9 * * mon-fri` weekdays at 09:00, `0 0 1 * *` monthly. Also `@hourly`, `@daily`,
+  `@weekly`, `@monthly`. A run is a few seconds late at most. Runs missed while the
+  server was down, or while the previous run was still going, are skipped, not caught
+  up.
+- Names: lowercase letters, digits, `-` and `_`. At most 20 schedules and 50 jobs.
+- Jobs start a few seconds after they are queued, never during the request. A page
+  that waits for a job's result should poll an `/api/...` route that reads it from the
+  database.
+- `test_backend` with `job` (and `payload`) or `schedule` runs one once against the
+  draft. Jobs a tested request enqueues are listed in `jobs_enqueued`, not run.
+  `backend_logs` lists recent live runs and their errors.
+
 ## Logging and randomness
 
 ```js
@@ -156,5 +209,5 @@ crypto.randomHex(16);             // 32 hex characters
 
 ## Not available
 
-Timers, `URL`, `TextEncoder`, `Buffer`, `require`, Node and browser APIs, npm
+Timers (use `jobs.enqueue` with `delaySeconds`, or `jobs.schedule`), `URL`, `TextEncoder`, `Buffer`, `require`, Node and browser APIs, npm
 packages, reading or writing files, environment variables.

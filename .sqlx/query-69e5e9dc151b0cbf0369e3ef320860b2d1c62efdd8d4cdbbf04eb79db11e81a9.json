@@ -1,0 +1,134 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!\", kind, name, status, attempts, max_attempts, run_at, created_at,\n                      finished_at, last_error\n               FROM site_jobs WHERE site_id = ?1 ORDER BY id DESC LIMIT ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "max_attempts",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "max_attempts"
+          }
+        }
+      },
+      {
+        "name": "run_at",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "run_at"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "finished_at",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "name": "last_error",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "last_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "69e5e9dc151b0cbf0369e3ef320860b2d1c62efdd8d4cdbbf04eb79db11e81a9"
+}

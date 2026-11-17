@@ -1,10 +1,10 @@
 ---
 name: build-backend
-description: Add or change a site's backend - server-side JavaScript under backend/ that answers /api/ requests, stores data in the site's own SQLite database, signs visitors in, and calls outside APIs with the owner's keys. Use when the site must save or serve data (forms, guestbooks, counters, votes, sign-ups, small APIs), needs visitor accounts or members-only content, must call another service, or when changing existing files under backend/.
+description: Add or change a site's backend - server-side JavaScript under backend/ that answers /api/ requests, stores data in the site's own SQLite database, signs visitors in, calls outside APIs with the owner's keys, and runs background jobs and scheduled tasks. Use when the site must save or serve data (forms, guestbooks, counters, votes, sign-ups, small APIs), needs visitor accounts or members-only content, must call another service, must do work later or on a timetable (nightly refresh, digests, slow AI calls), or when changing existing files under backend/.
 license: MIT OR Apache-2.0
 metadata:
   author: sitewright
-  version: "1.0"
+  version: "1.1"
 ---
 
 # Build a backend
@@ -29,7 +29,8 @@ browser. This shapes everything:
   often.
 - **Requests and responses are UTF-8 text** (JSON, forms, HTML). No file uploads.
 - **A handler has 10 seconds** and one request runs at a time per site. Keep handlers
-  short; never loop waiting for something.
+  short; never loop waiting for something. Slow or later work goes into a background
+  job (see below).
 - The backend's files are never served to visitors, but they are in the site's history.
   Do not put passwords or API keys in them.
 
@@ -155,6 +156,36 @@ the owner's setting.
 
 The call's shape is in `references/api.md`. `test_backend` makes real model calls.
 
+## Background jobs and schedules
+
+Use `jobs` when work should not happen inside a visitor's request, or should happen on a
+timetable:
+
+- **Slow work after a request**: an AI summary of a new post, calling a slow service,
+  processing many rows. The handler saves the data, calls `jobs.enqueue(...)` and
+  answers at once; the job stores its result in the database; the page polls an
+  `/api/...` route until the result is there.
+- **Recurring work** with `jobs.schedule(name, cron, handler)`: refresh cached data from
+  an outside API every 15 minutes, build a daily digest with an AI model, delete old
+  rows nightly. Cron times are UTC; convert from the user's time zone if they gave one,
+  and say in your summary when it runs in their terms.
+
+Jobs and schedules have exactly the access the backend has: the same database, secrets,
+approved hosts and AI models, within the same limits the owner set. Declare them at the
+top level of `backend/index.js` (or a file it imports). The details, limits and cron
+syntax are in `references/api.md`.
+
+Rules:
+
+- A job can run more than once (it is retried when it throws). Make it safe to repeat:
+  check whether the work is already done before doing it again.
+- Do not schedule more often than the task needs. Every run that calls a model counts
+  against the site's monthly AI allowance; every-minute schedules cost that 43,000
+  times a month. Prefer hourly or daily, and `*/15` at most for outside APIs.
+- Test each job and schedule once with `test_backend` (`job` with a `payload`, or
+  `schedule`) before publishing, and read its `console`. After publishing,
+  `backend_logs` shows each run and why it failed.
+
 ## Visitor accounts
 
 When visitors need to sign up and sign in, use the built-in `auth` module. Read
@@ -164,5 +195,5 @@ never create your own users table.
 ## When the user asks for something backends cannot do yet
 
 Sending email (unless through an HTTPS API the owner approves), password reset by email,
-file uploads, scheduled jobs and triggers in the database are not available. Say so
+file uploads and triggers in the database are not available. Say so
 plainly in your summary, and build the part that is possible.

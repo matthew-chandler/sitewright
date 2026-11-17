@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE site_jobs SET status = 'failed', finished_at = ?1,\n                    last_error = 'the server stopped while this was running'\n             WHERE status = 'running' AND kind = 'schedule'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ce011ba4bf3e28fdb2c8c8f97428e5f3acd467ea9b7eeeed2fccf2cd0460536b"
+}

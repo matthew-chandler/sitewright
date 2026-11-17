@@ -28,7 +28,8 @@ backend/migrations/0001_<what>.sql    database schema, applied in order at publi
 ## How it runs
 
 - **One worker process per site**, started on the first `/api` request and stopped after
-  five minutes without one. It is the `sitewright` binary itself, started with an
+  five minutes without one. A site with background jobs or schedules gets a second one
+  for them, on the same terms. It is the `sitewright` binary itself, started with an
   internal argument, running the QuickJS engine. A worker uses a few megabytes.
 - **The worker is jailed.** Before it reads any site code it installs a seccomp filter
   that allows about thirty system calls: reading and writing its two pipes, memory, the
@@ -105,6 +106,46 @@ waiting for the daemon (a query, an outside request, a model call) does not coun
 against that limit; each of those has its own (5 s, 8 s and 60 s), and a request may
 take 90 seconds in all. While one request waits, the site's other API requests queue.
 
+## Background jobs and schedules
+
+A backend can do work outside a visitor's request: **jobs** it queues
+(`jobs.enqueue`, for example to ask a model for a summary after a post is saved) and
+**scheduled tasks** it declares with a cron expression (`jobs.schedule`, for example a
+nightly clean-up or an hourly refresh from an outside API). The design is in
+[ADR-0011](adr/0011-backend-jobs.md).
+
+- **Same access, no more.** Jobs and scheduled runs make the same requests to the
+  daemon as the site's request handlers, under the same site: its own database, its own
+  secrets, only its approved hosts, and AI models only if you turned them on for the
+  site, counted against the same per-minute and monthly limits and the same usage line.
+  Nothing on this page gains a new switch because of jobs; your existing settings
+  apply to them.
+- **Their own worker.** Each site with background work gets a second jailed worker, so
+  a long job never makes visitors wait. A site's jobs and scheduled runs take turns,
+  one at a time. The worker counts towards `backends.max_workers`.
+- **Only the published release runs jobs and schedules.** When the agent tests a draft,
+  jobs it queues are listed for it and not run; it can run one by hand against the
+  draft's copy of the data.
+- **Timing.** The daemon looks for due work every ten seconds. Cron expressions are in
+  UTC. Runs missed while the daemon was stopped, or while the previous run was still
+  going, are skipped rather than caught up. A job interrupted by a restart is queued
+  again.
+- **Failures.** A job whose code throws is retried after 30 seconds, 2 minutes, 8
+  minutes and so on, up to its number of attempts (3 unless the code says otherwise,
+  at most 10). A job whose name the live release no longer has fails without running.
+- **What you see.** The site's page, under **Backend**, lists the scheduled tasks with
+  their next run and the 20 most recent runs with their outcome and error. The agent
+  sees the same list (with secret values replaced by their names). Console output from
+  background work is marked "background". Finished runs are kept for a week.
+- **Turning it off.** `backends.jobs = false` stops all background work on the server;
+  `jobs.enqueue` then fails. To stop one site's schedule, ask the agent to remove it, or
+  roll the site back.
+
+Limits: 30 seconds of a job's own work (`backends.job_timeout_secs`; time spent waiting
+for the database, outside requests or models does not count) and five minutes in all;
+a 64 KB payload; 1000 jobs waiting per site; 20 schedules and 50 kinds of job per
+backend; a delay of at most 30 days.
+
 ## Secrets and outside services
 
 A backend can call other services over HTTPS, under two controls that only you hold.
@@ -173,6 +214,8 @@ if you need to: stop the daemon, replace `site.db` with it (remove `site.db-wal`
 | JavaScript memory per site | 64 MB | `backends.memory_mb` |
 | Database size per site | 100 MB | `backends.max_db_mb` |
 | Idle time before a worker stops | 300 s | `backends.idle_secs` |
+| Job or scheduled task run time | 30 s | `backends.job_timeout_secs` |
+| Background jobs and schedules | on | `backends.jobs` |
 | Workers alive at once | 8 | `backends.max_workers` |
 | Request body | 1 MB | fixed |
 | Response body | 4 MB | fixed |
@@ -195,7 +238,7 @@ be published.
 
 ## What backends cannot do yet
 
-Email, scheduled jobs, binary uploads, streaming responses and npm packages.
+Email, binary uploads, streaming responses and npm packages.
 
 ## Backups
 

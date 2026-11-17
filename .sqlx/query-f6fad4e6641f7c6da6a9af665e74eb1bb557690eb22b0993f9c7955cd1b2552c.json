@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE site_jobs SET status = CASE WHEN attempts < max_attempts THEN 'queued' ELSE 'failed' END,\n                    finished_at = CASE WHEN attempts < max_attempts THEN NULL ELSE ?1 END,\n                    last_error = 'the server stopped while this was running'\n             WHERE status = 'running' AND kind = 'job'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f6fad4e6641f7c6da6a9af665e74eb1bb557690eb22b0993f9c7955cd1b2552c"
+}

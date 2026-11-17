@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE site_jobs SET status = 'running', attempts = attempts + 1\n               WHERE id IN (SELECT id FROM site_jobs\n                            WHERE site_id = ?1 AND status = 'queued' AND run_at <= ?2\n                            ORDER BY run_at, id LIMIT ?3)\n               RETURNING id as \"id!\", name, payload, attempts, max_attempts",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "name": "attempts",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "max_attempts",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "max_attempts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2930c005300e93d9c47d1b4b077354cc649ce7bb7870f02186ea3afd7be546aa"
+}

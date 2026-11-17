@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-17
+
+### Added
+
+- Background jobs and scheduled tasks for site backends. Backend code declares job
+  handlers with `jobs.define` and recurring tasks with `jobs.schedule(name, cron, fn)`
+  (five-field cron, UTC), and queues work with `jobs.enqueue(name, payload, { delaySeconds,
+  attempts })`. Jobs and schedules run in a separate jailed worker per site, so they
+  never hold up visitors, and they have exactly the backend's access: its database,
+  secrets, approved hosts and, when the owner turned them on, AI models within the
+  site's limits. Failed jobs are retried with back-off. ADR-0011.
+- The site's page lists a backend's scheduled tasks with their next run, and its recent
+  jobs and runs with their errors. Console output from background work is marked.
+- The agent's `test_backend` runs a job or schedule once against the draft and lists
+  the jobs a tested request queued; `backend_logs` includes recent runs. The
+  `build-backend` skill teaches when and how to use jobs.
+- `[backends] jobs` and `job_timeout_secs` settings.
+
 ## [1.11.0] - 2026-11-17
 
 ### Changed

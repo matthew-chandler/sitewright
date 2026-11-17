@@ -397,6 +397,86 @@ export const llm = {
   },
 };
 
+// ---------------------------------------------------------------- background work
+
+const TASK_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const jobHandlers = new Map();
+const scheduled = new Map();
+let declaring = true;
+
+function declare(kind, name, handler) {
+  if (!declaring) throw new Error(`declare ${kind}s at the top level of a module, not inside a handler`);
+  if (typeof name !== "string" || !TASK_NAME.test(name)) {
+    throw new Error(`a ${kind} name is 1 to 64 lowercase letters, digits, - and _, starting with a letter or digit: ${show(name)}`);
+  }
+  if (typeof handler !== "function") throw new Error(`the ${kind} ${name} needs a handler function`);
+  if (jobHandlers.has(name) || scheduled.has(name)) throw new Error(`the name ${name} is already used by another job or schedule`);
+}
+
+/**
+ * Work that runs outside a visitor's request, in its own worker, with the same access
+ * as the rest of the backend (database, secrets, approved hosts, AI models).
+ */
+export const jobs = {
+  /** Declare a job handler: `async (payload, info) => {}`. Top level only. */
+  define(name, handler) {
+    declare("job", name, handler);
+    jobHandlers.set(name, handler);
+  },
+  /**
+   * Run `handler(info)` on a five-field cron schedule in UTC, such as "0 6 * * *"
+   * (06:00 every day) or "*\/15 * * * *" (every 15 minutes). Top level only.
+   */
+  schedule(name, cron, handler) {
+    declare("schedule", name, handler);
+    if (typeof cron !== "string") throw new Error(`the schedule ${name} needs a cron expression such as "0 6 * * *"`);
+    scheduled.set(name, { cron, handler });
+  },
+  /**
+   * Queue a job to run soon in the background. `payload` is any JSON value (up to 64 KB).
+   * Options: `delaySeconds` (up to 30 days), `attempts` (1 to 10, default 3).
+   * Returns `{ id }`.
+   */
+  async enqueue(name, payload = null, options = {}) {
+    return call("jobs.enqueue", {
+      name: String(name),
+      payload: payload === undefined ? null : payload,
+      delaySeconds: options.delaySeconds === undefined ? 0 : options.delaySeconds,
+      attempts: options.attempts === undefined ? 3 : options.attempts,
+    });
+  },
+};
+
+/** Used by the worker after loading: what was declared. Declaring ends here. */
+export function __declared() {
+  declaring = false;
+  return JSON.stringify({
+    jobs: [...jobHandlers.keys()],
+    schedules: [...scheduled.entries()].map(([name, s]) => ({ name, cron: s.cron })),
+  });
+}
+
+/** Used by the worker: run one job or scheduled task. */
+export async function __runTask(raw) {
+  const task = JSON.parse(raw);
+  try {
+    if (task.kind === "job") {
+      const handler = jobHandlers.get(task.name);
+      if (!handler) throw new Error(`there is no job named ${task.name}; declare it with jobs.define`);
+      await handler(task.payload, task.info);
+    } else {
+      const entry = scheduled.get(task.name);
+      if (!entry) throw new Error(`there is no schedule named ${task.name}`);
+      await entry.handler(task.info);
+    }
+    return JSON.stringify({ error: null });
+  } catch (error) {
+    log.error(`${task.kind} ${task.name} failed:`, error);
+    const message = error instanceof Error ? error.message : show(error);
+    return JSON.stringify({ error: message || "failed" });
+  }
+}
+
 // ---------------------------------------------------------------- visitor accounts
 
 function authCall(op, args) {

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT site_id as \"site_id!\" FROM site_jobs WHERE status = 'queued' AND run_at <= ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "site_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "site_jobs",
+            "name": "site_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "51c96aeaf3a39614b60da62ce2d3ab7e61be769e8b4ec05484cbe34f04669b33"
+}

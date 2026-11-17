@@ -237,6 +237,30 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
         }
     }));
 
+    // Background work of site backends: due scheduled tasks and queued jobs.
+    if backend.enabled() && backend.jobs_enabled() {
+        let token = cancel.clone();
+        let (job_backends, job_store) = (backend.clone(), store.clone());
+        servers.push(tokio::spawn(async move {
+            match job_backends.recover_jobs().await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(n, "settled background jobs left running by the last stop"),
+                Err(error) => {
+                    tracing::error!(%error, "could not settle interrupted background jobs")
+                }
+            }
+            let mut ticker = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => return,
+                    _ = ticker.tick() => {
+                        job_backends.run_due(live_backends(&job_store)).await;
+                    }
+                }
+            }
+        }));
+    }
+
     let token = cancel.clone();
     let purge_backends = backend.clone();
     let purge_store = store.clone();
@@ -254,6 +278,9 @@ pub async fn start(loaded: Loaded, listen: Option<SocketAddr>) -> anyhow::Result
                     // Runs at start-up too (the first tick is immediate).
                     if let Err(error) = purge_backends.prune_secrets().await {
                         tracing::error!(%error, "removing the secrets of purged sites failed");
+                    }
+                    if let Err(error) = purge_backends.prune_jobs().await {
+                        tracing::error!(%error, "removing old background jobs failed");
                     }
                 }
             }
@@ -566,4 +593,20 @@ impl Daemon {
         self.shutdown().await;
         Ok(())
     }
+}
+
+/// The sites whose live release has a backend, for the job scheduler.
+fn live_backends(store: &sw_sites::SiteStore) -> Vec<sw_backend::LiveBackend> {
+    store
+        .routes()
+        .sites()
+        .into_iter()
+        .filter(|route| route.backend)
+        .map(|route| sw_backend::LiveBackend {
+            site_id: route.site_id,
+            site: route.site.clone(),
+            sha: route.sha.clone(),
+            root: route.root.clone(),
+        })
+        .collect()
 }

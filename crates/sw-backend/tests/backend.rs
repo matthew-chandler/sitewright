@@ -81,6 +81,7 @@ fn target(site_id: i64, version: &str) -> Target {
         site: format!("site{site_id}"),
         version: version.into(),
         draft: false,
+        background: false,
     }
 }
 
@@ -513,6 +514,7 @@ async fn workers_are_per_site_replaced_on_new_code_capped_and_reaped() {
     // A draft runs beside the live worker, not instead of it.
     let draft = Target {
         draft: true,
+        background: false,
         ..target(1, "c")
     };
     assert_eq!(

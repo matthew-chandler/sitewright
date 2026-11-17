@@ -101,6 +101,8 @@ Site backends: agent-written JavaScript that answers a site's `/api/` requests. 
 | `max_db_mb` | `100` | Largest a site's database may grow. |
 | `idle_secs` | `300` | A site's worker stops after this long without requests. |
 | `max_workers` | `8` | Most worker processes alive at once. |
+| `jobs` | `true` | Let backends run background jobs and scheduled tasks. |
+| `job_timeout_secs` | `30` | Longest a job or scheduled task may run, not counting time spent waiting for the database, outside requests or models. |
 
 ### `[tls]`
 
