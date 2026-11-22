@@ -51,7 +51,7 @@ jobs:
           # Fixed owner and order, so the archive depends only on its contents.
           tar --sort=name --owner=0 --group=0 --numeric-owner -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sitewright-${{ matrix.target }}
           path: |
